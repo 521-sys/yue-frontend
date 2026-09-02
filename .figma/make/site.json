@@ -1,0 +1,10 @@
+{
+  "description": "This web application offers an interactive platform for learning Cantonese, featuring modules for listening and memorizing vocabulary, tailored for language learners.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

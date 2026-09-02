@@ -1,0 +1,50 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&family=Noto+Serif+SC:wght@600;700&display=swap');
+@import 'tailwindcss';
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: #f0f4ff;
+}
+
+/* Hide scrollbars by default */
+::-webkit-scrollbar { width: 0; height: 0; }
+
+@keyframes sheetUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.animate-sheet-up {
+  animation: sheetUp 0.25s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-fade-in {
+  animation: fadeIn 0.2s ease;
+}
+
+@theme inline {
+  --color-primary: #2B5CE6;
+  --color-primary-light: #4A7CF7;
+  --color-accent: #F5A623;
+  --color-accent-dark: #E8950F;
+  --color-bg: #F0F4FF;
+  --color-card: #FFFFFF;
+  --color-text: #1a1a2e;
+  --color-muted: #7a8499;
+  --color-success: #22c55e;
+  --color-danger: #ef4444;
+}
