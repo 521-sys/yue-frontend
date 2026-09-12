@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Settings,
   BookMarked,
@@ -16,6 +16,7 @@ import { useLearning, setDailyGoal, resetAll, isLoggedin, currentUser, logout } 
 import { WORDS } from "../data/words";
 import { ProfileSheet, ProfileSheetKind, ACHIEVEMENTS } from "../components/ProfileSheets";
 import { AuthSheet } from "../components/AuthSheet";
+import { AUTH_CHANGED_EVENT } from "../lib/api";
 
 const WEEK_CN = ["一", "二", "三", "四", "五", "六", "日"];
 
@@ -23,6 +24,13 @@ export default function ProfileScreen() {
   const s = useLearning();
   const [sheet, setSheet] = useState<ProfileSheetKind>(null);
   const [authOpen, setAuthOpen] = useState(false);
+  // 登录状态：监听全局事件，登录/登出/token 过期时即时刷新显示
+  const [authState, setAuthState] = useState(() => isLoggedin());
+  useEffect(() => {
+    const sync = () => setAuthState(isLoggedin());
+    window.addEventListener(AUTH_CHANGED_EVENT, sync);
+    return () => window.removeEventListener(AUTH_CHANGED_EVENT, sync);
+  }, []);
 
   const total = WORDS.length;
   const mastery = total ? Math.round((s.learned.length / total) * 100) : 0;
@@ -64,9 +72,9 @@ export default function ProfileScreen() {
               😊
             </div>
             <div>
-              <p className="text-white font-black text-xl">{isLoggedin() ? currentUser() : "粤语学习者"}</p>
+              <p className="text-white font-black text-xl">{authState ? currentUser() : "粤语学习者"}</p>
               <p className="text-white/70 text-xs mt-0.5">
-                {isLoggedin() ? "已登录 · 进度云端同步" : "入门级 · 广州方言"}
+                {authState ? "已登录 · 进度云端同步" : "入门级 · 广州方言"}
               </p>
               <div className="flex items-center gap-1 mt-1">
                 {[0, 1, 2, 3, 4].map((i) => (
@@ -81,7 +89,7 @@ export default function ProfileScreen() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {isLoggedin() ? (
+            {authState ? (
               <button
                 onClick={() => {
                   if (confirm("确定退出登录吗？")) logout();

@@ -1,10 +1,8 @@
 import { useState, useEffect } from "react";
 import { Volume2, ChevronLeft, ChevronRight, Check, X, RotateCcw } from "lucide-react";
-import { useLearning, markReviewed, markStuck } from "../lib/store";
+import { useLearning, markSeen, markLearned, markStuck } from "../lib/store";
 import { WORDS, CATS, Word, shuffle } from "../data/words";
 import { speak } from "../lib/speech";
-
-const GROUP_SIZE = 10;
 
 const toneColors: Record<string, string> = {
   "1": "#2B5CE6",
@@ -15,15 +13,19 @@ const toneColors: Record<string, string> = {
   "6": "#64748b",
 };
 
-function buildQueue(stuck: string[]): Word[] {
+function buildQueue(stuck: string[], seen: string[], size: number): Word[] {
+  // 学习：先学生词本待加强的词，再学还没出现过的词；出现过的词不再重复
   const stuckWords = WORDS.filter((w) => stuck.includes(w.id));
-  const rest = shuffle(WORDS.filter((w) => !stuck.includes(w.id)));
-  return [...stuckWords, ...rest].slice(0, GROUP_SIZE);
+  const fresh = shuffle(
+    WORDS.filter((w) => !stuck.includes(w.id) && !seen.includes(w.id))
+  );
+  return [...stuckWords, ...fresh].slice(0, size);
 }
 
-export default function StudyScreen() {
+/** 记粤语 · 词汇卡片跟读学习流程（首页「记粤语」按钮进入） */
+export default function LearnCards({ onExit }: { onExit: () => void }) {
   const s = useLearning();
-  const [queue, setQueue] = useState<Word[]>(() => buildQueue(s.stuck));
+  const [queue, setQueue] = useState<Word[]>(() => buildQueue(s.stuck, s.seen, s.dailyGoal));
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [results, setResults] = useState<Record<string, "know" | "learn">>({});
@@ -45,7 +47,8 @@ export default function StudyScreen() {
   const mark = (result: "know" | "learn") => {
     if (!word) return;
     setResults((r) => ({ ...r, [word.id]: result }));
-    if (result === "know") markReviewed(word.id);
+    markSeen(word.id);
+    if (result === "know") markLearned(word.id);
     else markStuck(word.id);
     if (index < queue.length - 1) {
       setFlipped(false);
@@ -55,7 +58,7 @@ export default function StudyScreen() {
   };
 
   const replay = () => {
-    setQueue(buildQueue(s.stuck));
+    setQueue(buildQueue(s.stuck, s.seen, s.dailyGoal));
     setIndex(0);
     setFlipped(false);
     setResults({});
@@ -72,9 +75,12 @@ export default function StudyScreen() {
         style={{ background: "linear-gradient(160deg, #1a3fbf 0%, #2B5CE6 50%, #4a7cf7 100%)" }}
       >
         <div className="flex items-center justify-between mb-4">
-          <div>
-            <p className="text-white/70 text-xs">背粤语</p>
-            <p className="text-white font-bold text-lg">粤语词汇跟读</p>
+          <button onClick={onExit} className="text-white/80 text-sm font-medium">
+            ✕ 退出
+          </button>
+          <div className="text-center">
+            <p className="text-white/70 text-xs">记粤语</p>
+            <p className="text-white font-bold text-lg leading-tight">词汇卡片跟读</p>
           </div>
           <div className="bg-white/15 rounded-xl px-3 py-1.5 text-white text-sm font-mono font-bold">
             {index + 1} / {queue.length}
@@ -96,8 +102,8 @@ export default function StudyScreen() {
               <Check size={44} className="text-white" strokeWidth={3} />
             </div>
             <div className="text-center">
-              <p className="text-2xl font-black text-[#1a1a2e]">完成本组背诵！</p>
-              <p className="text-gray-500 text-sm mt-1">背了 {queue.length} 个粤语词汇</p>
+              <p className="text-2xl font-black text-[#1a1a2e]">完成本组学习！</p>
+              <p className="text-gray-500 text-sm mt-1">共学 {queue.length} 个粤语词汇</p>
             </div>
             <div className="flex gap-4">
               <div className="bg-white rounded-2xl p-4 text-center shadow-sm">
@@ -113,12 +119,20 @@ export default function StudyScreen() {
                 <p className="text-xs text-gray-500 mt-1">待加强</p>
               </div>
             </div>
-            <button
-              onClick={replay}
-              className="flex items-center gap-2 bg-[#2B5CE6] text-white px-6 py-3 rounded-xl font-bold active:scale-95"
-            >
-              <RotateCcw size={16} /> 再次练习
-            </button>
+            <div className="flex gap-3 w-full max-w-xs">
+              <button
+                onClick={replay}
+                className="flex-1 flex items-center justify-center gap-2 bg-[#2B5CE6] text-white px-6 py-3 rounded-xl font-bold active:scale-95"
+              >
+                <RotateCcw size={16} /> 再次练习
+              </button>
+              <button
+                onClick={onExit}
+                className="flex-1 bg-white border border-gray-200 text-[#1a1a2e] px-6 py-3 rounded-xl font-bold active:scale-95"
+              >
+                返回首页
+              </button>
+            </div>
           </div>
         ) : (
           <>

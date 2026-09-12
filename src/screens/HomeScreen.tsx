@@ -17,13 +17,12 @@ import {
   RotateCcw,
   RefreshCw,
 } from "lucide-react";
-import { useLearning, markLearned, markStuck } from "../lib/store";
+import { useLearning, markReviewed, markStuck } from "../lib/store";
 import { WORDS, CATS, Word, shortMan, shuffle } from "../data/words";
 import { speak } from "../lib/speech";
 import { HomeSheet, SheetKind } from "../components/HomeSheets";
 import { MasteredSheet, CheckinSheet } from "../components/ProfileSheets";
-
-const DAILY_GOAL = 10;
+import LearnCards from "../components/LearnCards";
 
 function makeOptions(word: Word): string[] {
   const correct = shortMan(word.man);
@@ -36,15 +35,15 @@ function makeOptions(word: Word): string[] {
 }
 
 const quickModules = [
-  { icon: Mic, label: "发音跟读", kind: "follow" as SheetKind },
+  { icon: Mic, label: "AI语音", kind: "follow" as SheetKind },
   { icon: AudioLines, label: "跟读训练", kind: "practice" as SheetKind },
   { icon: BookMarked, label: "生词本", kind: "vocab" as SheetKind },
   { icon: CheckSquare, label: "自我检测", kind: "quiz" as SheetKind },
 ];
 
-export default function HomeScreen({ onNavigate }: { onNavigate?: (tab: string) => void }) {
+export default function HomeScreen() {
   const s = useLearning();
-  const [view, setView] = useState<"home" | "quiz" | "done">("home");
+  const [view, setView] = useState<"home" | "quiz" | "done" | "cards">("home");
   const [queue, setQueue] = useState<Word[]>([]);
   const [idx, setIdx] = useState(0);
   const [options, setOptions] = useState<string[]>([]);
@@ -64,9 +63,11 @@ export default function HomeScreen({ onNavigate }: { onNavigate?: (tab: string) 
   }
 
   function startQuiz() {
-    const stuckWords = WORDS.filter((w) => s.stuck.includes(w.id));
-    const rest = shuffle(WORDS.filter((w) => !s.stuck.includes(w.id)));
-    const pool = [...stuckWords, ...rest].slice(0, DAILY_GOAL);
+    // 复习：只测「记粤语」出现过的词（seen），生词本待加强的优先巩固
+    const seenWords = WORDS.filter((w) => s.seen.includes(w.id));
+    const stuckFirst = seenWords.filter((w) => s.stuck.includes(w.id));
+    const rest = shuffle(seenWords.filter((w) => !s.stuck.includes(w.id)));
+    const pool = [...stuckFirst, ...rest].slice(0, s.dailyGoal);
     if (!pool.length) return;
     setQueue(pool);
     setIdx(0);
@@ -83,7 +84,7 @@ export default function HomeScreen({ onNavigate }: { onNavigate?: (tab: string) 
     setPicked(i);
     const ok = options[i] === correctText;
     if (ok) {
-      markLearned(word.id);
+      markReviewed(word.id);
       setCorrectCount((c) => c + 1);
     } else {
       markStuck(word.id);
@@ -104,6 +105,11 @@ export default function HomeScreen({ onNavigate }: { onNavigate?: (tab: string) 
     setTimeout(() => speak(queue[ni].yue), 250);
   }
 
+  /* ---------- 记粤语 · 词汇卡片学习 ---------- */
+  if (view === "cards") {
+    return <LearnCards onExit={() => setView("home")} />;
+  }
+
   /* ---------- 斩词流程 ---------- */
   if (view === "quiz" && word) {
     const progress = ((idx + 1) / queue.length) * 100;
@@ -114,7 +120,7 @@ export default function HomeScreen({ onNavigate }: { onNavigate?: (tab: string) 
             <button onClick={() => setView("home")} className="text-white/80 text-sm font-medium">
               ✕ 退出
             </button>
-            <span className="text-white font-bold text-sm">记粤语 · 斩词</span>
+            <span className="text-white font-bold text-sm">复习 · 斩词</span>
             <span className="bg-white/15 rounded-xl px-3 py-1 text-white text-sm font-mono font-bold">
               {idx + 1} / {queue.length}
             </span>
@@ -172,7 +178,7 @@ export default function HomeScreen({ onNavigate }: { onNavigate?: (tab: string) 
     return (
       <div className="flex flex-col h-full bg-[#f0f4ff]">
         <div className="px-4 pt-10 pb-6" style={{ background: "linear-gradient(160deg, #1a3fbf 0%, #2B5CE6 50%, #4a7cf7 100%)" }}>
-          <p className="text-white/70 text-xs">记粤语</p>
+          <p className="text-white/70 text-xs">复习</p>
           <p className="text-white font-bold text-lg">本组斩词完成</p>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center gap-6 px-6">
@@ -180,8 +186,8 @@ export default function HomeScreen({ onNavigate }: { onNavigate?: (tab: string) 
             <Check size={44} className="text-white" strokeWidth={3} />
           </div>
           <div className="text-center">
-            <p className="text-2xl font-black text-[#1a1a2e]">今日记词完成！</p>
-            <p className="text-gray-500 text-sm mt-1">共记 {queue.length} 个粤语词</p>
+            <p className="text-2xl font-black text-[#1a1a2e]">今日复习完成！</p>
+            <p className="text-gray-500 text-sm mt-1">共复习 {queue.length} 个粤语词</p>
           </div>
           <div className="flex gap-4">
             <div className="bg-white rounded-2xl p-4 text-center shadow-sm">
@@ -292,31 +298,31 @@ export default function HomeScreen({ onNavigate }: { onNavigate?: (tab: string) 
               <p className="text-gray-400 text-xs mb-1">已记词</p>
               <div className="flex items-baseline gap-1">
                 <span className="text-5xl font-black text-[#1a1a2e]">{s.todayLearned}</span>
-                <span className="text-gray-400 text-sm">/ {DAILY_GOAL}</span>
+                <span className="text-gray-400 text-sm">/ {s.dailyGoal}</span>
               </div>
             </div>
             <div>
-              <p className="text-gray-400 text-xs mb-1">已背词</p>
+              <p className="text-gray-400 text-xs mb-1">已复习</p>
               <div className="flex items-baseline gap-1">
                 <span className="text-5xl font-black text-[#1a1a2e]">{s.todayReviewed}</span>
-                <span className="text-gray-400 text-sm">/ 30</span>
+                <span className="text-gray-400 text-sm">/ {s.dailyGoal}</span>
               </div>
             </div>
           </div>
           <div className="flex gap-3">
             <button
-              onClick={startQuiz}
+              onClick={() => setView("cards")}
               className="flex-1 py-3.5 rounded-xl font-bold text-white text-base transition-all active:scale-95"
               style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
             >
               记粤语
             </button>
             <button
-              onClick={() => onNavigate?.("study")}
+              onClick={startQuiz}
               className="flex-1 py-3.5 rounded-xl font-bold text-white text-base transition-all active:scale-95"
               style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
             >
-              背粤语
+              复习
             </button>
           </div>
         </div>

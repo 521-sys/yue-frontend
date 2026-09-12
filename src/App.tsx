@@ -1,20 +1,20 @@
 import { useState } from "react";
 import HomeScreen from "./screens/HomeScreen";
-import StudyScreen from "./screens/StudyScreen";
+import SceneDialogueScreen from "./screens/SceneDialogueScreen";
 import TogetherScreen from "./screens/TogetherScreen";
 import ShopScreen from "./screens/ShopScreen";
 import ProfileScreen from "./screens/ProfileScreen";
 import {
   BookOpen,
-  GraduationCap,
+  MessagesSquare,
   Users,
   ShoppingBag,
   User,
 } from "lucide-react";
 
 const tabs = [
-  { id: "home", label: "记粤语", icon: BookOpen },
-  { id: "study", label: "背粤语", icon: GraduationCap },
+  { id: "home", label: "首页", icon: BookOpen },
+  { id: "study", label: "场景对话", icon: MessagesSquare },
   { id: "together", label: "一起学", icon: Users },
   { id: "shop", label: "商城", icon: ShoppingBag },
   { id: "profile", label: "我", icon: User },
@@ -25,8 +25,8 @@ export default function App() {
 
   const renderScreen = () => {
     switch (activeTab) {
-      case "home": return <HomeScreen onNavigate={setActiveTab} />;
-      case "study": return <StudyScreen />;
+      case "home": return <HomeScreen />;
+      case "study": return <SceneDialogueScreen />;
       case "together": return <TogetherScreen />;
       case "shop": return <ShopScreen />;
       case "profile": return <ProfileScreen />;

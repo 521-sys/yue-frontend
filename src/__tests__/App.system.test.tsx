@@ -10,9 +10,9 @@ describe("App 系统测试 - 底部 Tab 导航与页面切换", () => {
     localStorage.clear();
   });
 
-  it("默认渲染「记粤语」Tab 并高亮，底部存在 5 个 Tab 按钮", () => {
+  it("默认渲染「首页」Tab 并高亮，底部存在 5 个 Tab 按钮", () => {
     render(<App />);
-    const tabs = ["记粤语", "背粤语", "一起学", "商城", "我"];
+    const tabs = ["首页", "场景对话", "一起学", "商城", "我"];
     for (const label of tabs) {
       // getAllByText 因为可能存在同名元素，至少有一个可点击
       const matches = screen.getAllByText(label);
@@ -20,12 +20,11 @@ describe("App 系统测试 - 底部 Tab 导航与页面切换", () => {
     }
   });
 
-  it("点击「背粤语」切换到 StudyScreen 页面", () => {
+  it("点击「场景对话」切换到场景对话页面", () => {
     render(<App />);
-    const btn = screen.getAllByText("背粤语")[0];
-    fireEvent.click(btn);
-    // StudyScreen 渲染后不再显示首页「记粤语」tab 的高亮态，但 tab 按钮仍存在
-    expect(screen.getAllByText("背粤语").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getAllByText("场景对话")[0]);
+    // 场景对话页渲染后出现场景列表
+    expect(screen.getByText("茶餐厅点餐")).toBeInTheDocument();
   });
 
   it("点击「一起学」切换到 TogetherScreen 页面", () => {
@@ -49,20 +48,20 @@ describe("App 系统测试 - 底部 Tab 导航与页面切换", () => {
     expect(screen.getAllByText("我").length).toBeGreaterThan(0);
   });
 
-  it("从商城返回「记粤语」首页", () => {
+  it("从商城返回「首页」", () => {
     render(<App />);
     // 先去商城
     fireEvent.click(screen.getAllByText("商城")[0]);
     expect(screen.getByText("粤语学习资源")).toBeInTheDocument();
-    // 再回记粤语
-    fireEvent.click(screen.getAllByText("记粤语")[0]);
+    // 再回首页
+    fireEvent.click(screen.getAllByText("首页")[0]);
     // 商城标题应消失
     expect(screen.queryByText("粤语学习资源")).not.toBeInTheDocument();
   });
 
   it("底部 Tab 栏始终可见，切换页面后不消失", () => {
     render(<App />);
-    const tabs = ["记粤语", "背粤语", "一起学", "商城", "我"];
+    const tabs = ["首页", "场景对话", "一起学", "商城", "我"];
     for (const label of tabs) {
       fireEvent.click(screen.getAllByText(label)[0]);
       // 切换后底部 5 个 tab 仍都存在

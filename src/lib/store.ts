@@ -10,9 +10,9 @@ import {
 } from "./api";
 
 export interface LearningState {
-  learned: string[]; // 已「记」（斩）的词 id
+  learned: string[]; // 已掌握（卡片「认识」）的词 id
   stuck: string[]; // 生词本（选错 / 再背一次）
-  reviewed: string[]; // 已「背」过的词 id
+  reviewed: string[]; // 复习测验答对过的词 id
   streak: number; // 连续学习天数
   lastDay: string; // 最后学习日期
   todayLearned: number; // 今日已记数量
@@ -30,6 +30,7 @@ const KEY = "yueLearnReactV1";
 const DEFAULT: LearningState = {
   learned: [],
   stuck: [],
+  seen: [],
   reviewed: [],
   streak: 0,
   lastDay: "",
@@ -37,7 +38,7 @@ const DEFAULT: LearningState = {
   todayLearnedDate: "",
   todayReviewed: 0,
   todayReviewedDate: "",
-  dailyGoal: 10,
+  dailyGoal: 30,
   activity: {},
   coins: 128,
   owned: [],
@@ -51,7 +52,10 @@ function load(): LearningState {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return { ...DEFAULT };
-    return { ...DEFAULT, ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw);
+    // 旧版本默认 dailyGoal=10，统一升级为新默认 30
+    if (parsed && parsed.dailyGoal === 10) parsed.dailyGoal = DEFAULT.dailyGoal;
+    return { ...DEFAULT, ...parsed };
   } catch {
     return { ...DEFAULT };
   }
@@ -98,7 +102,7 @@ function bumpActivity(s: LearningState): LearningState {
   return { ...s, activity: { ...s.activity, [d]: (s.activity[d] || 0) + 1 } };
 }
 
-/** 记粤语：斩对一个词 */
+/** 词汇卡片点「认识」：计入已记词 */
 export function markLearned(id: string) {
   const s = bumpActivity(touchStreak(state));
   const d = today();
@@ -111,11 +115,17 @@ export function markLearned(id: string) {
   });
 }
 
-/** 记粤语选错 / 背粤语「再背一次」：进生词本 */
+/** 选错 / 「再背一次」：进生词本 */
 export function markStuck(id: string) {
   const s = bumpActivity(touchStreak(state));
   const stuck = s.stuck.includes(id) ? s.stuck : [...s.stuck, id];
   save({ ...s, stuck });
+}
+
+/** 记粤语卡片作答过的词（认识 / 再背一次都算「出现过」），复习只从这里出题 */
+export function markSeen(id: string) {
+  if (state.seen.includes(id)) return;
+  save({ ...state, seen: [...state.seen, id] });
 }
 
 /** 消费铜板购买商品，余额不足返回 false */
@@ -132,7 +142,7 @@ export function removeStuck(id: string) {
   save({ ...state, stuck: state.stuck.filter((x) => x !== id) });
 }
 
-/** 背粤语：标记「认识」 */
+/** 复习测验答对：计入已复习 */
 export function markReviewed(id: string) {
   const s = bumpActivity(touchStreak(state));
   const d = today();

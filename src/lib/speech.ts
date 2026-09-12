@@ -24,10 +24,16 @@ function pickVoice() {
   if (!("speechSynthesis" in window)) return null;
   const voices = speechSynthesis.getVoices();
   if (!voices.length) return null;
+  const isCantonese = (v: SpeechSynthesisVoice) =>
+    v.lang === "zh-HK" ||
+    /yue|Cantonese|粤/i.test(v.name + v.lang) ||
+    /HiuGaai|HiuMaan|KaLing/i.test(v.name);
   return (
-    voices.find((v) => /yue|Cantonese|粤/i.test(v.name + v.lang)) ||
-    voices.find((v) => v.lang === "zh-HK") ||
-    voices.find((v) => v.lang.startsWith("zh")) ||
+    // 1. 在线神经语音（如 Edge 的 Microsoft HiuGaai Online (Natural)）——口音最标准
+    voices.find((v) => isCantonese(v) && /natural|online/i.test(v.name)) ||
+    // 2. 本地粤语语音（Windows 粤语语言包自带 HiuGaai / HiuMaan / KaLing）
+    voices.find(isCantonese) ||
+    // 3. 没有粤语语音时不指定 voice，避免用普通话语音硬读粤语
     null
   );
 }

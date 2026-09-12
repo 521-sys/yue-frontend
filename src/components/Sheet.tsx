@@ -98,7 +98,7 @@ export function StuckList() {
             <BookMarked size={28} className="text-[#2B5CE6]" />
           </div>
           <p className="text-gray-500 text-sm">生词本是空的</p>
-          <p className="text-gray-400 text-xs">记粤语选错、背粤语「再背一次」的词会收进来</p>
+          <p className="text-gray-400 text-xs">复习选错、卡片跟读「再背一次」的词会收进来</p>
         </div>
       ) : (
         <div className="flex flex-col gap-2">

@@ -143,7 +143,7 @@ describe("store.ts 状态层", () => {
 
   describe("setDailyGoal", () => {
     it("更新 dailyGoal", () => {
-      expect(getState().dailyGoal).toBe(10);
+      expect(getState().dailyGoal).toBe(30);
       setDailyGoal(20);
       expect(getState().dailyGoal).toBe(20);
       setDailyGoal(5);
@@ -169,7 +169,7 @@ describe("store.ts 状态层", () => {
       expect(s.reviewed).toEqual([]);
       expect(s.coins).toBe(128);
       expect(s.owned).toEqual([]);
-      expect(s.dailyGoal).toBe(10);
+      expect(s.dailyGoal).toBe(30);
       expect(s.todayLearned).toBe(0);
       expect(s.todayReviewed).toBe(0);
       expect(s.streak).toBe(0);
@@ -293,6 +293,7 @@ describe("store.ts 状态层", () => {
       const expected: LearningState = {
         learned: [],
         stuck: [],
+        seen: [],
         reviewed: [],
         streak: 0,
         lastDay: "",
@@ -300,7 +301,7 @@ describe("store.ts 状态层", () => {
         todayLearnedDate: "",
         todayReviewed: 0,
         todayReviewedDate: "",
-        dailyGoal: 10,
+        dailyGoal: 30,
         activity: {},
         coins: 128,
         owned: [],

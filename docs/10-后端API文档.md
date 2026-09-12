@@ -1,8 +1,8 @@
 # 10 - 后端 API 文档
 
-> 文档版本：v1.0  
+> 文档版本：v1.1（新增微信小程序登录 + 小程序端接入说明）  
 > 后端项目：`yue-backend/`（Spring Boot 3.2.5 + MySQL）  
-> 前置约定：遵循 [00-开发约定.md](./00-开发约定.md)；本文档定义前后端联动的 HTTP API 契约
+> 前置约定：遵循 [00-开发约定.md](./00-开发约定.md)；本文档定义三端（H5 + 微信小程序）与后端联动的 HTTP API 契约
 
 ---
 
@@ -10,11 +10,12 @@
 
 | 项 | 说明 |
 | --- | --- |
-| 基础 URL | `http://localhost:8080`（开发）；生产由部署域名决定 |
+| 基础 URL | `http://localhost:8080`（本地开发）；生产：`https://<你的已备案域名>` |
 | 数据格式 | `application/json; charset=UTF-8` |
-| 鉴权方式 | JWT Bearer Token，登录后放入 `Authorization: Bearer <token>` |
-| CORS | 后端放行 `http://localhost:*` 与 `http://127.0.0.1:*`，允许带凭证 |
-| 功能范围 | 用户账号体系（注册/登录）+ 学习数据云端同步（GET/PUT） |
+| 鉴权方式 | JWT Bearer Token，请求头 `Authorization: Bearer <token>` |
+| CORS | 放行 `http://localhost:*` / `http://127.0.0.1:*`，生产用 `CORS_ORIGINS` 环境变量 |
+| 功能范围 | 账号体系（H5 注册/登录 + 微信小程序 code 登录）+ 学习数据云端同步（GET/PUT） |
+| 小程序硬要求 | **已备案域名 + HTTPS 证书 + 小程序后台配置 request 合法域名白名单** |
 
 ---
 
@@ -26,7 +27,7 @@
 CREATE DATABASE yue DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-> `application.yml` 的 `spring.jpa.hibernate.ddl-auto=update` 会在后端首次启动时自动建表，下方 SQL 仅供手动建表或审查参考。
+> `ddl-auto=update` 会自动建表；SQL 仅供审查。
 
 ### 2.2 表结构
 
@@ -35,31 +36,35 @@ CREATE DATABASE yue DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 | 字段 | 类型 | 约束 | 说明 |
 | --- | --- | --- | --- |
 | id | BIGINT | PK, AUTO_INCREMENT | 用户 ID |
-| username | VARCHAR(32) | NOT NULL, UNIQUE | 登录用户名（3~32 字符） |
-| password_hash | VARCHAR(100) | NOT NULL | BCrypt 哈希密码 |
+| username | VARCHAR(32) | NOT NULL, UNIQUE | 登录用户名（H5 注册/微信登录自动生成 `wx_<后6位>`） |
+| password_hash | VARCHAR(100) | NOT NULL | BCrypt 哈希。微信用户写占位哈希，永远不用于密码校验 |
+| wx_openid | VARCHAR(64) | UNIQUE, NULL | 微信 openid。小程序端登录时写入，H5 端为 NULL |
 | created_at | DATETIME | NOT NULL | 注册时间 |
 
-**learn_state** — 学习状态表（每用户一行）
+**learn_state** — 学习状态表（每用户一行；H5/小程序**按账号共享**）
 
 | 字段 | 类型 | 约束 | 说明 |
 | --- | --- | --- | --- |
 | id | BIGINT | PK, AUTO_INCREMENT | 主键 |
 | user_id | BIGINT | NOT NULL, UNIQUE | 关联 users.id |
-| state_json | LONGTEXT | NOT NULL | 前端 LearningState 完整 JSON |
+| state_json | LONGTEXT | NOT NULL, ≤512KB | 对应端 LearningState 完整 JSON |
 | updated_at | DATETIME | NOT NULL | 最后同步时间 |
+
+> ⚠️ 三端学习状态字段不同：H5 含 coins/stuck/todayLearned... 小程序端含 correct/wrong/practice...。当前策略是按"每端整体 JSON 存储"，同一个微信账号在两端分别保存各自的 state_json。未来如果要做跨端字段合并，需在小程序 store 层做字段双向映射。
 
 ### 2.3 建表 SQL（参考）
 
 ```sql
 USE yue;
-
 CREATE TABLE users (
   id BIGINT NOT NULL AUTO_INCREMENT,
   username VARCHAR(32) NOT NULL,
   password_hash VARCHAR(100) NOT NULL,
+  wx_openid VARCHAR(64) NULL,
   created_at DATETIME NOT NULL,
   PRIMARY KEY (id),
-  UNIQUE KEY uk_users_username (username)
+  UNIQUE KEY uk_users_username (username),
+  UNIQUE KEY uk_users_wx_openid (wx_openid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE learn_state (
@@ -72,52 +77,54 @@ CREATE TABLE learn_state (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
-### 2.4 state_json 结构
-
-与前端 [04-数据库设计.md](./04-数据库设计.md) 的 `LearningState` 完全一致：
-
-```json
-{
-  "learned": ["w1", "w3"],
-  "stuck": ["w2"],
-  "reviewed": ["w1"],
-  "streak": 3,
-  "lastDay": "2026-09-02",
-  "todayLearned": 5,
-  "todayLearnedDate": "2026-09-02",
-  "todayReviewed": 2,
-  "todayReviewedDate": "2026-09-02",
-  "dailyGoal": 10,
-  "activity": { "2026-09-02": 7 },
-  "coins": 98,
-  "owned": ["道具A"]
-}
-```
-
 ---
 
 ## 三、认证机制
 
-1. 客户端 `POST /api/auth/register` 或 `/login`，服务端返回 `{ token, username, userId }`。
-2. 客户端把 `token` 存入 `localStorage`（键 `yueToken`）。
-3. 后续请求带 `Authorization: Bearer <token>`。
-4. 服务端 `JwtAuthFilter` 校验签名与有效期，通过后把 `userId` 注入 `SecurityContext`。
-5. Token 有效期 24 小时（`app.jwt.expiration-ms`）。
+### 3.1 H5 账号密码登录（不变）
+
+1. `POST /api/auth/register` 或 `/login` → `{ token, username, userId }`。
+2. 前端存 `localStorage['yueToken']`；请求头 `Authorization: Bearer <token>`。
+3. 未登录 / token 过期：**HTTP 401 JSON**（非 Spring 默认 403），前端自动清除登录态。
+
+### 3.2 微信小程序 code 登录（新增）
+
+```
+小程序                    后端                     微信
+  │                       │                       │
+  │ wx.login()            │                       │
+  │───────────┐           │                       │
+  │           │ code      │                       │
+  │◀──────────┘           │                       │
+  │ POST /api/auth/wechat │                       │
+  │ { code }─────────────────▶                    │
+  │                       │ code2session          │
+  │                       │ appid+secret+code────────▶
+  │                       │                       │
+  │                       │   openid, session_key │
+  │                       │◀──────────────────────┘
+  │                       │ 查/写 users.wx_openid │
+  │                       │ 签发 JWT              │
+  │ { token, username, userId }                   │
+  │◀─────────────────────────                    │
+  │ 存 token；拉 GET /api/learn/state             │
+  │ 合并：max(本地, 云端)                          │
+  │ save() 触发 1.5s 防抖上传 PUT                │
+```
+
+### 3.3 安全说明
+
+- 生产必须通过环境变量 `WX_APPID` / `WX_SECRET` 配置真实密钥；未配置时后端走"开发模式"——直接把 code 当作 openid（仅开发者工具联调用，**严禁用于正式发布**）。
+- JWT 24h 过期，401 时小程序端自动清除 `mp_token` / `mp_user`。
+- 微信用户 password_hash 为 BCrypt 占位，拒绝账号密码登录（不匹配）。
 
 ---
 
 ## 四、接口详述
 
-### 4.1 注册
+### 4.1 H5 注册
 
-`POST /api/auth/register`
-
-**请求体**
-```json
-{ "username": "cantoneseFan", "password": "yue2026" }
-```
-
-| 字段 | 类型 | 校验 |
+`POST /api/auth/register` ...（不变，继续原文）
 | --- | --- | --- |
 | username | string | 必填，3~32 字符 |
 | password | string | 必填，6~64 字符 |
@@ -221,9 +228,14 @@ Content-Type: application/json
 { "status": "synced", "updatedAt": "2026-09-02T12:34:56Z" }
 ```
 
-**失败响应** `400 Bad Request`（如非合法 JSON）
+**失败响应** `400 Bad Request`
 ```json
 { "error": "stateJson 不是合法 JSON" }
+```
+
+**失败响应** `400 Bad Request`（超过 512KB）
+```json
+{ "error": "学习状态数据过大" }
 ```
 
 > 同步策略：**整体覆盖（last-write-wins）**。客户端每次上传会覆盖云端整条记录，不做字段级合并。
@@ -236,7 +248,7 @@ Content-Type: application/json
 | --- | --- | --- |
 | 400 | 业务异常（用户名已存在、密码错误等） | `{"error": "..."}` |
 | 400 | 参数校验失败 | `{"error": "username: 用户名长度 3~32; password: 密码长度 6~64"}` |
-| 401 | 未登录或 token 失效 | 由 Spring Security 默认处理 |
+| 401 | 未登录或 token 失效（含过期） | `{"error": "未登录或登录已过期"}`（自定义 AuthenticationEntryPoint，前端收到后自动清除本地登录态） |
 | 500 | 未预期异常 | `{"error": "服务器内部错误"}`（不泄漏堆栈） |
 
 ---
@@ -247,10 +259,25 @@ Content-Type: application/json
 
 | 改动文件 | 改动内容 |
 | --- | --- |
-| [src/lib/api.ts](file:///c:/Users/liu123/WorkBuddy/2026-09-01-20-12-50/yue-frontend/src/lib/api.ts) | 新增 API 客户端：register/login/fetchState/pushState + token 管理 |
+| [src/lib/api.ts](file:///c:/Users/liu123/WorkBuddy/2026-09-01-20-12-50/yue-frontend/src/lib/api.ts) | 新增 API 客户端：register/login/fetchState/pushState + token 管理 + `AUTH_CHANGED_EVENT` 状态事件 + 401 自动清除登录态 |
 | [src/lib/store.ts](file:///c:/Users/liu123/WorkBuddy/2026-09-01-20-12-50/yue-frontend/src/lib/store.ts) | `save()` 末尾加防抖上传触发；新增 `loginAndSync` / `registerAndSync` / `logout` |
 | [src/components/AuthSheet.tsx](file:///c:/Users/liu123/WorkBuddy/2026-09-01-20-12-50/yue-frontend/src/components/AuthSheet.tsx) | 新增登录/注册抽屉（复用 Sheet 容器） |
-| [src/screens/ProfileScreen.tsx](file:///c:/Users/liu123/WorkBuddy/2026-09-01-20-12-50/yue-frontend/src/screens/ProfileScreen.tsx) | 个人中心加登录入口 + 登录状态显示 |
+| [src/screens/ProfileScreen.tsx](file:///c:/Users/liu123/WorkBuddy/2026-09-01-20-12-50/yue-frontend/src/screens/ProfileScreen.tsx) | 个人中心加登录入口 + 登录状态显示（监听 `AUTH_CHANGED_EVENT`，token 过期时界面即时回到未登录态） |
+
+### 配置外部化（环境变量）
+
+敏感配置（密码/密钥）不写入 Git，两种提供方式：
+
+- **本机开发**：后端项目根 `config/application-local.yml`（已被 `.gitignore` 忽略，不进 Git、不打进 jar），Spring Boot 启动自动加载
+- **生产部署**：通过环境变量注入
+
+| 环境变量 | 说明 |
+| --- | --- |
+| `SPRING_PROFILES_ACTIVE` | 部署时设为 `prod`，不加载本地配置；本机默认 `local` |
+| `MYSQL_PASSWORD` | 数据库密码，部署时必须设置 |
+| `JWT_SECRET` | JWT 签名密钥，生产用 `openssl rand -base64 48` 生成 |
+| `WX_APPID` / `WX_SECRET` | 微信小程序 AppID / AppSecret，不配置则走开发模式 |
+| `CORS_ORIGINS` | 允许的前端来源，逗号分隔，如 `https://yue.example.com` |
 
 ### 同步时序
 

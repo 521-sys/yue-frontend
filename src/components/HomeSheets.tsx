@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ChevronLeft,
   Check,
   RotateCcw,
   Search,
@@ -9,80 +8,359 @@ import {
   BookOpen,
   Trophy,
   Mic,
-  AudioLines,
   Volume2,
   Play,
   Square,
+  Send,
+  Settings,
+  Trash2,
 } from "lucide-react";
 import { Sheet, SoundButton, StuckList } from "./Sheet";
 import { markLearned, markStuck } from "../lib/store";
 import { WORDS, CATS, Word, shortMan, shuffle, catOf } from "../data/words";
 import { translate, reverseLookup, hasKnown } from "../data/dictionary";
-import { speak } from "../lib/speech";
+import { speak, stopSpeak } from "../lib/speech";
+import { aiChat, isLoggedin, AUTH_CHANGED_EVENT } from "../lib/api";
+import { AuthSheet } from "./AuthSheet";
 
-/* ============================ 发音跟读 ============================ */
+/* ============================ AI语音（粤语 AI 助手） ============================ */
 
-function FollowSheet({ onClose }: { onClose: () => void }) {
-  const [i, setI] = useState(0);
-  const word = WORDS[i % WORDS.length];
-  const cat = catOf(word.cat);
+interface AiCfg {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+const CFG_KEY = "yueAiChatCfgV1";
+const DEFAULT_CFG: AiCfg = {
+  baseUrl: "https://api.deepseek.com/v1",
+  apiKey: "",
+  model: "deepseek-chat",
+};
+
+function loadCfg(): AiCfg {
+  try {
+    const raw = localStorage.getItem(CFG_KEY);
+    if (raw) return { ...DEFAULT_CFG, ...JSON.parse(raw) };
+  } catch {
+    /* ignore */
+  }
+  return { ...DEFAULT_CFG };
+}
+
+interface ChatMsg {
+  role: "user" | "ai";
+  yue: string;
+  man?: string;
+}
+
+const WELCOME: ChatMsg = {
+  role: "ai",
+  yue: "哈佬！我係你嘅粤语AI老师～用粤语或者普通话同我倾偈，讲错唔紧要，我会教你点讲。",
+  man: "你好！我是你的粤语AI老师～用粤语或普通话跟我聊天，说错没关系，我会教你怎么说。",
+};
+
+const SYS_PROMPT = [
+  "你是一位亲切耐心的粤语老师，正在和一位普通话母语的初学者用粤语聊天练习。",
+  "规则：每次回复先用简短自然的广州话口语说 1~2 句，然后另起一行用「普通话：」给出翻译。",
+  "如果对方说了不地道的粤语，温和地示范正确说法；多围绕问候、饮食、购物、交通等日常场景引导对方开口。",
+  "严格按以下格式回复，不要输出其他内容：",
+  "粤语：……",
+  "普通话：……",
+].join("\n");
+
+/* 未配置 API Key 时的本地简易应答，保证打开即可练 */
+const FALLBACKS: { k: RegExp; yue: string; man: string }[] = [
+  { k: /你好|哈佬|hello|hi/i, yue: "你好呀！今日过得点呀？想学啲乜嘢粤语？", man: "你好呀！今天过得怎么样？想学点什么粤语？" },
+  { k: /多谢|唔该|thank/i, yue: "唔使客气！「多谢」用嚟谢人送嘢，「唔该」用嚟请人帮忙，好易分㗎。", man: "不客气！「多谢」用于谢人送东西，「唔该」用于请人帮忙，很好区分。" },
+  { k: /食|饮|饿|饭|茶|餐/i, yue: "讲起食嘢，「唔该，一杯冻柠茶」呢句喺茶餐厅好常用，同我读一次啦！", man: "说起吃的，「麻烦来一杯冻柠茶」这句在茶餐厅很常用，跟我读一次吧！" },
+  { k: /几多|几钱|价钱|平|贵/i, yue: "问价可以说「呢个几多钱？」，讲价就说「平啲啦！」，好实用㗎。", man: "问价可以说「这个多少钱？」，讲价就说「便宜点吧！」，很实用的。" },
+  { k: /再见|拜拜|走/i, yue: "得闲饮茶！下次再同你练习啦～", man: "有空来喝茶！下次再跟你练习吧～" },
+];
+
+const LOCAL_GENERIC: ChatMsg[] = [
+  { role: "ai", yue: "好呀！你可以问我「呢句粤语点讲？」，或者介绍下你今日做咗乜嘢～", man: "好呀！你可以问我「这句粤语怎么说？」，或者介绍下你今天做了什么～" },
+  { role: "ai", yue: "唔使急，慢慢讲。讲错咗我会教你正确讲法㗎！试下同我打个招呼啦～", man: "不用急，慢慢说。说错了我也会教你正确说法！试着跟我打个招呼吧～" },
+];
+
+function localReply(text: string): ChatMsg {
+  const hit = FALLBACKS.find((f) => f.k.test(text));
+  return hit
+    ? { role: "ai", yue: hit.yue, man: hit.man }
+    : LOCAL_GENERIC[Math.floor(Math.random() * LOCAL_GENERIC.length)];
+}
+
+/** 解析 AI 回复中的「粤语：/普通话：」两段 */
+function parseReply(text: string): ChatMsg {
+  const yueM = text.match(/粤语[:：]\s*([\s\S]*?)(?=\n\s*普通话[:：]|$)/);
+  const manM = text.match(/普通话[:：]\s*([\s\S]*?)(?=\n\s*粤语[:：]|$)/);
+  if (yueM) return { role: "ai", yue: yueM[1].trim(), man: manM ? manM[1].trim() : undefined };
+  return { role: "ai", yue: text.trim() };
+}
+
+const SR: any =
+  typeof window !== "undefined"
+    ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    : null;
+
+function AiChatSheet({ onClose }: { onClose: () => void }) {
+  const [msgs, setMsgs] = useState<ChatMsg[]>([WELCOME]);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [showCfg, setShowCfg] = useState(false);
+  const [cfg, setCfg] = useState<AiCfg>(loadCfg);
+  const listRef = useRef<HTMLDivElement>(null);
+  const recogRef = useRef<any>(null);
+  const hasKey = cfg.apiKey.trim().length > 0;
+  const [authed, setAuthed] = useState(isLoggedin());
+  const [showAuth, setShowAuth] = useState(false);
+
+  useEffect(() => {
+    const sync = () => setAuthed(isLoggedin());
+    window.addEventListener(AUTH_CHANGED_EVENT, sync);
+    return () => window.removeEventListener(AUTH_CHANGED_EVENT, sync);
+  }, []);
+
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+  }, [msgs, sending]);
+
+  function handleClose() {
+    stopSpeak();
+    onClose();
+  }
+
+  async function callAi(history: ChatMsg[]): Promise<ChatMsg> {
+    const messages = [
+      { role: "system", content: SYS_PROMPT },
+      ...history.slice(-12).map((m) => ({
+        role: m.role === "ai" ? "assistant" : "user",
+        content: m.man ? `粤语：${m.yue}\n普通话：${m.man}` : m.yue,
+      })),
+    ];
+    let text = "";
+    if (hasKey) {
+      // 直连模式：用户自备 OpenAI 兼容接口
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 30000);
+      try {
+        const res = await fetch(cfg.baseUrl.replace(/\/+$/, "") + "/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${cfg.apiKey.trim()}`,
+          },
+          body: JSON.stringify({ model: cfg.model, messages, temperature: 0.7 }),
+          signal: ctrl.signal,
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+        text = data.choices?.[0]?.message?.content ?? "";
+      } finally {
+        clearTimeout(timer);
+      }
+    } else {
+      // 服务端代理：已登录用户无需自备 Key
+      const data = await aiChat(messages);
+      text = data.choices?.[0]?.message?.content ?? "";
+    }
+    if (!text.trim()) throw new Error("empty reply");
+    return parseReply(text);
+  }
+
+  async function send(raw?: string) {
+    const text = (raw ?? input).trim();
+    if (!text || sending) return;
+    setInput("");
+    const history: ChatMsg[] = [...msgs, { role: "user", yue: text }];
+    setMsgs(history);
+    setSending(true);
+    try {
+      const reply = hasKey || authed ? await callAi(history) : localReply(text);
+      setMsgs((prev) => [...prev, reply]);
+      setTimeout(() => speak(reply.yue), 200);
+    } catch (e) {
+      const detail = e instanceof Error && e.message ? e.message : "";
+      setMsgs((prev) => [
+        ...prev,
+        {
+          role: "ai",
+          yue: "唔好意思，我暫時聯絡唔上大腦，你遲啲再試下啦～",
+          man: detail
+            ? `AI 调用失败：${detail}`
+            : "AI 调用失败，请检查网络或右上角设置里的接口配置。",
+        },
+      ]);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  function toggleListen() {
+    if (listening) {
+      recogRef.current?.stop();
+      setListening(false);
+      return;
+    }
+    if (!SR) return;
+    try {
+      const r = new SR();
+      r.lang = "zh-HK";
+      r.interimResults = false;
+      r.maxAlternatives = 1;
+      r.onresult = (ev: any) => {
+        const t = ev?.results?.[0]?.[0]?.transcript;
+        if (t) send(t);
+      };
+      r.onend = () => setListening(false);
+      r.onerror = () => setListening(false);
+      recogRef.current = r;
+      setListening(true);
+      r.start();
+    } catch {
+      setListening(false);
+    }
+  }
+
   return (
-    <Sheet title="发音跟读" onClose={onClose}>
-      <p className="text-gray-500 text-xs mb-4">
-        先听标准粤语发音，再大声跟读。点击喇叭可反复播放，读熟后换下一个词。
-      </p>
-      <div className="bg-white rounded-3xl p-6 shadow-lg shadow-blue-100 flex flex-col items-center gap-4">
-        <span className="bg-[#EEF3FF] text-[#2B5CE6] text-xs px-2.5 py-0.5 rounded-full font-medium">
-          {cat.icon} {cat.name} · {i + 1} / {WORDS.length}
-        </span>
-        <p className="text-6xl font-black text-[#1a1a2e] tracking-widest text-center">{word.yue}</p>
-        <button
-          onClick={() => speak(word.yue)}
-          className="flex items-center gap-2 text-[#2B5CE6] font-mono text-base bg-[#EEF3FF] px-4 py-2 rounded-full active:scale-95 transition-transform"
-        >
-          {word.jyut}
-        </button>
-        <p className="text-gray-500 text-sm">{word.man}</p>
-
-        <button
-          onClick={() => speak(word.yue)}
-          className="w-20 h-20 rounded-full flex items-center justify-center shadow-xl shadow-blue-200 active:scale-95 transition-transform"
-          style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
-        >
-          <AudioLines size={36} className="text-white" />
-        </button>
-
-        <div className="w-full bg-[#f8faff] rounded-xl p-3 flex items-start gap-2">
-          <Mic size={16} className="text-[#F5A623] flex-shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <p className="text-[#1a1a2e] font-medium text-sm">{word.example}</p>
-            <p className="text-gray-400 text-xs mt-1">{word.exampleMan}</p>
-          </div>
-          <SoundButton text={word.example} size={16} className="w-8 h-8 flex-shrink-0" />
+    <Sheet title="AI语音助手" onClose={handleClose}>
+      <div className="flex items-center justify-between mb-3">
+        {hasKey ? (
+          <span className="text-xs text-gray-400">直连 AI · {cfg.model}</span>
+        ) : authed ? (
+          <span className="text-xs text-gray-400">已连接 AI 老师（服务端）</span>
+        ) : (
+          <button
+            onClick={() => setShowAuth(true)}
+            className="text-xs text-[#2B5CE6] bg-[#EEF3FF] px-2.5 py-1 rounded-full font-medium active:scale-95 transition-transform"
+          >
+            本地练习模式 · 点此登录，解锁 AI 老师
+          </button>
+        )}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              stopSpeak();
+              setMsgs([WELCOME]);
+            }}
+            className="w-8 h-8 rounded-full bg-white shadow-sm flex items-center justify-center active:scale-90 transition-transform"
+            title="清空对话"
+          >
+            <Trash2 size={14} className="text-gray-500" />
+          </button>
+          <button
+            onClick={() => setShowCfg((v) => !v)}
+            className="w-8 h-8 rounded-full bg-white shadow-sm flex items-center justify-center active:scale-90 transition-transform"
+            title="AI 接口设置"
+          >
+            <Settings size={14} className="text-[#2B5CE6]" />
+          </button>
         </div>
       </div>
 
-      <div className="flex items-center justify-between mt-4">
+      {showCfg && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm mb-3 flex flex-col gap-2">
+          <p className="text-xs text-gray-500 leading-relaxed">
+            登录用户默认使用服务端 AI（无需 Key）。也可以填自己的 OpenAI 兼容接口（DeepSeek / 智谱 /
+            通义等）直连，Key 仅保存在本机浏览器。
+          </p>
+          <input
+            value={cfg.baseUrl}
+            onChange={(e) => setCfg({ ...cfg, baseUrl: e.target.value })}
+            placeholder="API 地址（以 /v1 结尾）"
+            className="bg-[#f8faff] rounded-xl px-3 py-2 text-sm outline-none"
+          />
+          <input
+            value={cfg.apiKey}
+            onChange={(e) => setCfg({ ...cfg, apiKey: e.target.value })}
+            type="password"
+            placeholder="API Key"
+            className="bg-[#f8faff] rounded-xl px-3 py-2 text-sm outline-none"
+          />
+          <input
+            value={cfg.model}
+            onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
+            placeholder="模型名"
+            className="bg-[#f8faff] rounded-xl px-3 py-2 text-sm outline-none"
+          />
+          <button
+            onClick={() => setShowCfg(false)}
+            className="py-2 rounded-xl font-bold text-white text-sm active:scale-95 transition-transform"
+            style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
+          >
+            保存
+          </button>
+        </div>
+      )}
+
+      <div ref={listRef} className="flex flex-col gap-3 min-h-[32vh] max-h-[46vh] overflow-y-auto mb-2 pr-1">
+        {msgs.map((m, i) =>
+          m.role === "ai" ? (
+            <div
+              key={i}
+              className="self-start max-w-[85%] bg-white rounded-2xl rounded-bl-md px-4 py-3 shadow-sm shadow-blue-50"
+            >
+              <p className="text-[#1a1a2e] text-sm leading-relaxed whitespace-pre-wrap">{m.yue}</p>
+              {m.man && <p className="text-gray-400 text-xs mt-1.5 leading-relaxed">{m.man}</p>}
+              <button
+                onClick={() => speak(m.yue)}
+                className="mt-2 flex items-center gap-1 text-[#2B5CE6] text-xs bg-[#EEF3FF] px-2.5 py-1 rounded-full active:scale-95 transition-transform"
+              >
+                <Volume2 size={12} /> 再听一次
+              </button>
+            </div>
+          ) : (
+            <div
+              key={i}
+              className="self-end max-w-[85%] rounded-2xl rounded-br-md px-4 py-3 text-white text-sm leading-relaxed"
+              style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
+            >
+              {m.yue}
+            </div>
+          )
+        )}
+        {sending && (
+          <div className="self-start bg-white rounded-2xl px-4 py-3 shadow-sm shadow-blue-50 text-gray-400 text-sm">
+            AI 老师思考中…
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2 pb-2">
+        {SR && (
+          <button
+            onClick={toggleListen}
+            className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 active:scale-90 transition-transform ${
+              listening ? "bg-red-500 animate-pulse" : "bg-white shadow-sm"
+            }`}
+            title={listening ? "停止录音" : "讲粤语"}
+          >
+            <Mic size={18} className={listening ? "text-white" : "text-[#2B5CE6]"} />
+          </button>
+        )}
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") send();
+          }}
+          placeholder={listening ? "听到你讲嘢啦…" : "用粤语或普通话打字"}
+          disabled={sending}
+          className="flex-1 bg-white rounded-full px-4 py-2.5 text-sm text-[#1a1a2e] outline-none placeholder:text-gray-400 disabled:opacity-60"
+        />
         <button
-          onClick={() => setI((i - 1 + WORDS.length) % WORDS.length)}
-          className="w-12 h-12 rounded-full bg-white shadow-sm flex items-center justify-center active:scale-95"
-        >
-          <ChevronLeft size={22} className="text-[#2B5CE6]" />
-        </button>
-        <button
-          onClick={() => setI((i + 1) % WORDS.length)}
-          className="flex-1 mx-4 py-3 rounded-xl font-bold text-white text-base active:scale-95"
+          onClick={() => send()}
+          disabled={sending || !input.trim()}
+          className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 active:scale-90 transition-transform disabled:opacity-40"
           style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
+          title="发送"
         >
-          下一个词
-        </button>
-        <button
-          onClick={() => speak(word.yue)}
-          className="w-12 h-12 rounded-full bg-white shadow-sm flex items-center justify-center active:scale-95"
-        >
-          <RotateCcw size={20} className="text-[#2B5CE6]" />
+          <Send size={16} className="text-white" />
         </button>
       </div>
+
+      {showAuth && <AuthSheet onClose={() => setShowAuth(false)} />}
     </Sheet>
   );
 }
@@ -845,7 +1123,7 @@ export function HomeSheet({ kind, onClose }: { kind: SheetKind; onClose: () => v
   if (kind === null) return null;
   switch (kind) {
     case "follow":
-      return <FollowSheet onClose={onClose} />;
+      return <AiChatSheet onClose={onClose} />;
     case "practice":
       return <PracticeSheet onClose={onClose} />;
     case "vocab":
