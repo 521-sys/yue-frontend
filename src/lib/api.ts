@@ -2,7 +2,7 @@
 // BASE 默认指向本地后端，部署时用 VITE_API_BASE 覆盖（.env.production 中留空 = 同源相对路径，由 nginx 反代）
 const BASE =
 (import.meta as unknown as { env?: { VITE_API_BASE?: string } }).env
-?.VITE_API_BASE ?? "http://localhost:8080";
+?.VITE_API_BASE || "https://gnep.online";
 
 const TOKEN_KEY = "yueToken";
 const USER_KEY = "yueUser";
@@ -44,6 +44,15 @@ export interface AuthResponse {
   token: string;
   username: string;
   userId: number;
+  nickname?: string | null;
+  avatar?: string | null;
+}
+
+export interface Profile {
+  username: string;
+  phone?: string | null;
+  nickname?: string | null;
+  avatar?: string | null;
 }
 
 async function authFetch(path: string, init?: RequestInit): Promise<Response> {
@@ -91,6 +100,48 @@ export async function login(
   return res.json();
 }
 
+/** 手机号注册（H5 方案 B：手机号 + 密码） */
+export async function phoneRegister(
+  phone: string,
+  password: string
+): Promise<AuthResponse> {
+  const res = await authFetch("/api/auth/phone/register", {
+    method: "POST",
+    body: JSON.stringify({ phone, password }),
+  });
+  return res.json();
+}
+
+/** 手机号登录（H5 方案 B） */
+export async function phoneLogin(
+  phone: string,
+  password: string
+): Promise<AuthResponse> {
+  const res = await authFetch("/api/auth/phone/login", {
+    method: "POST",
+    body: JSON.stringify({ phone, password }),
+  });
+  return res.json();
+}
+
+/** 拉取个人资料（昵称/头像/脱敏手机号） */
+export async function getProfile(): Promise<Profile> {
+  const res = await authFetch("/api/user/profile");
+  return res.json();
+}
+
+/** 更新个人资料（昵称/头像，只传要改的字段） */
+export async function updateProfile(patch: {
+  nickname?: string;
+  avatar?: string;
+}): Promise<Profile> {
+  const res = await authFetch("/api/user/profile", {
+    method: "PUT",
+    body: JSON.stringify(patch),
+  });
+  return res.json();
+}
+
 /** 拉取云端学习状态 */
 export async function fetchState(): Promise<{
   hasCloudData: boolean;
@@ -122,4 +173,23 @@ export async function aiChat(
     body: JSON.stringify({ messages, temperature }),
   });
   return res.json();
+}
+
+/** 粤语 TTS：把文本合成为粤语 MP3（服务端 edge-tts「晓佳」音色，与离线音频同款），需登录 */
+export async function ttsCantonese(text: string): Promise<Blob> {
+  const token = getToken();
+  if (!token) throw new Error("未登录");
+  const res = await fetch(`${BASE}/api/ai/tts`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ text: text.slice(0, 200) }),
+  });
+  if (!res.ok) {
+    if (res.status === 401) clearToken();
+    throw new Error("语音合成失败");
+  }
+  return res.blob();
 }

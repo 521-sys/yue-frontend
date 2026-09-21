@@ -1,4 +1,5 @@
 import { AUDIO_MANIFEST } from "../data/audio-manifest";
+import { ttsCantonese, getToken } from "./api";
 
 /* ==================== 语音服务：离线粤语语音包 ====================
  * 优先播放预生成的离线粤语真人发音（微软晓佳 zh-HK-HiuGaaiNeural），
@@ -80,6 +81,22 @@ export function hasAudio(text: string): boolean {
   return !!AUDIO_MANIFEST[text];
 }
 
+/** 播放 Blob 音频（服务端 TTS 结果），播完自动释放 URL */
+function playBlob(url: string, rate: number) {
+  stopAudio();
+  try {
+    const a = new Audio(url);
+    a.playbackRate = rate;
+    curAudio = a;
+    const revoke = () => URL.revokeObjectURL(url);
+    a.onended = revoke;
+    a.onerror = revoke;
+    a.play().catch(revoke);
+  } catch {
+    URL.revokeObjectURL(url);
+  }
+}
+
 /** 朗读文本：优先离线粤语真人发音，未收录则回退浏览器 TTS。返回是否命中离线音频 */
 export function speak(text: string, rate = 1): boolean {
   const src = AUDIO_MANIFEST[text];
@@ -89,6 +106,27 @@ export function speak(text: string, rate = 1): boolean {
   }
   speakTTS(text, rate);
   return false;
+}
+
+/** AI 对话回复朗读：离线音频 → 服务端粤语 TTS（晓佳音色，需登录）→ 浏览器 TTS 兜底。
+ * 用于 AI 动态回复这类离线包覆盖不到的长文本，获得与离线音频同款的高质量粤语发音。
+ * 默认 1.2 倍速朗读，更接近自然对话节奏（离线音频 / 服务端 TTS / 浏览器 TTS 三条链路一致生效）。 */
+export async function speakAiReply(text: string, rate = 1.2): Promise<void> {
+  const src = AUDIO_MANIFEST[text];
+  if (src) {
+    playFile(src, rate);
+    return;
+  }
+  if (getToken()) {
+    try {
+      const blob = await ttsCantonese(text);
+      playBlob(URL.createObjectURL(blob), rate);
+      return;
+    } catch {
+      /* 服务端不可用时回退浏览器 TTS */
+    }
+  }
+  speakTTS(text, rate);
 }
 
 /** 停止当前播放 */

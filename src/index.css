@@ -17,6 +17,15 @@ body {
   background: #f0f4ff;
 }
 
+.voice-home {
+  background: radial-gradient(circle at 50% 46%, #e9efff 0, #f7f9ff 47%, #ffffff 100%);
+}
+
+.voice-orb {
+  background: radial-gradient(circle at 34% 25%, #7796ff 0, #426ded 42%, #294ed1 100%);
+  box-shadow: 0 0 0 13px #dfe7ff, 0 0 0 29px rgba(219, 229, 255, .48), 0 24px 52px rgba(48, 89, 209, .27);
+}
+
 /* Hide scrollbars by default */
 ::-webkit-scrollbar { width: 0; height: 0; }
 

@@ -35,7 +35,7 @@ describe("登录与云端同步（store + api 联动）", () => {
     expect(localStorage.getItem("yueToken")).toBe("t1");
     const put = fetchMock.mock.calls.find(([, i]) => i?.method === "PUT");
     expect(put).toBeTruthy();
-    expect(String((put?.[1] as RequestInit).body)).toContain('"coins":128');
+    expect(String((put?.[1] as RequestInit).body)).toContain('"dailyGoal":30');
   });
 
   it("loginAndSync：登录后拉取云端状态覆盖本地", async () => {
@@ -43,14 +43,13 @@ describe("登录与云端同步（store + api 联动）", () => {
       if (String(url).endsWith("/api/auth/login")) {
         return jsonOk({ token: "t2", username: "u2", userId: 2 });
       }
-      return jsonOk({ hasCloudData: true, state: { coins: 555, learned: ["w9"] } });
+      return jsonOk({ hasCloudData: true, state: { learned: ["w9"] } });
     });
 
     const r = await store.loginAndSync("u2", "123456");
 
     expect(r.username).toBe("u2");
     expect(localStorage.getItem("yueToken")).toBe("t2");
-    expect(store.getState().coins).toBe(555);
     expect(store.getState().learned).toContain("w9");
     // 拉取覆盖本地时不应触发回灌上传
     const putCalls = fetchMock.mock.calls.filter(([, i]) => i?.method === "PUT");
@@ -67,7 +66,59 @@ describe("登录与云端同步（store + api 联动）", () => {
 
     await store.loginAndSync("u3", "123456");
 
-    expect(store.getState().coins).toBe(128);
+    expect(store.getState().dailyGoal).toBe(30);
+  });
+
+  it("phoneLoginAndSync：手机号登录成功后保存 token 并同步云端", async () => {
+    fetchMock.mockImplementation(async (url: string | URL) => {
+      if (String(url).endsWith("/api/auth/phone/login")) {
+        return jsonOk({ token: "t5", username: "user5678", userId: 5, nickname: "小明", avatar: "🦊" });
+      }
+      return jsonOk({ hasCloudData: true, state: { learned: ["w3"] } });
+    });
+
+    const r = await store.phoneLoginAndSync("13812345678", "123456");
+
+    expect(r.username).toBe("user5678");
+    expect(localStorage.getItem("yueToken")).toBe("t5");
+    expect(store.getState().learned).toContain("w3");
+  });
+
+  it("phoneRegisterAndSync：手机号注册成功后上传本地状态作为初始记录", async () => {
+    fetchMock.mockImplementation(async (url: string | URL, init?: RequestInit) => {
+      if (String(url).endsWith("/api/auth/phone/register")) {
+        // 校验请求体确实带了手机号
+        expect((init?.body as string)).toContain('"phone":"13812345678"');
+        return jsonOk({ token: "t6", username: "user5678", userId: 6, nickname: "用户5678" });
+      }
+      return jsonOk({ status: "synced", updatedAt: "2026-09-02T00:00:00Z" });
+    });
+
+    await store.phoneRegisterAndSync("13812345678", "123456");
+
+    expect(localStorage.getItem("yueToken")).toBe("t6");
+    const put = fetchMock.mock.calls.find(([, i]) => i?.method === "PUT");
+    expect(put).toBeTruthy();
+  });
+
+  it("getProfile / updateProfile：个人资料拉取与更新", async () => {
+    localStorage.setItem("yueToken", "t7");
+    const { getProfile, updateProfile } = await import("../lib/api");
+
+    fetchMock.mockImplementation(async (url: string | URL, init?: RequestInit) => {
+      if (String(url).endsWith("/api/user/profile") && (!init?.method || init.method === "GET")) {
+        return jsonOk({ username: "user5678", phone: "138****5678", nickname: "小明", avatar: "🦊" });
+      }
+      return jsonOk({ username: "user5678", phone: "138****5678", nickname: "新昵称", avatar: "🐼" });
+    });
+
+    const p = await getProfile();
+    expect(p.phone).toBe("138****5678");
+    expect(p.nickname).toBe("小明");
+
+    const updated = await updateProfile({ nickname: "新昵称", avatar: "🐼" });
+    expect(updated.nickname).toBe("新昵称");
+    expect(updated.avatar).toBe("🐼");
   });
 
   it("token 失效（401）：自动清除登录态并广播事件", async () => {

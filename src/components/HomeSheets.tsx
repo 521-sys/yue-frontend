@@ -15,11 +15,11 @@ import {
   Settings,
   Trash2,
 } from "lucide-react";
-import { Sheet, SoundButton, StuckList } from "./Sheet";
+import { FullPage, Sheet, SoundButton, StuckList } from "./Sheet";
 import { markLearned, markStuck } from "../lib/store";
 import { WORDS, CATS, Word, shortMan, shuffle, catOf } from "../data/words";
 import { translate, reverseLookup, hasKnown } from "../data/dictionary";
-import { speak, stopSpeak } from "../lib/speech";
+import { speak, speakAiReply, stopSpeak } from "../lib/speech";
 import { aiChat, isLoggedin, AUTH_CHANGED_EVENT } from "../lib/api";
 import { AuthSheet } from "./AuthSheet";
 
@@ -81,13 +81,23 @@ const FALLBACKS: { k: RegExp; yue: string; man: string }[] = [
 const LOCAL_GENERIC: ChatMsg[] = [
   { role: "ai", yue: "好呀！你可以问我「呢句粤语点讲？」，或者介绍下你今日做咗乜嘢～", man: "好呀！你可以问我「这句粤语怎么说？」，或者介绍下你今天做了什么～" },
   { role: "ai", yue: "唔使急，慢慢讲。讲错咗我会教你正确讲法㗎！试下同我打个招呼啦～", man: "不用急，慢慢说。说错了我也会教你正确说法！试着跟我打个招呼吧～" },
+  { role: "ai", yue: "想学食嘢嘅粤语？「食飯未呀？」即系「吃饭了吗？」，好常用㗎！", man: "想学吃的粤语？「食饭未呀？」就是「吃饭了吗？」，很常用哦！" },
+  { role: "ai", yue: "问路可以用「唔该，XX 点去呀？」例如「唔该，地铁站点去呀？」", man: "问路可以用「劳驾，XX 怎么去？」比如「请问地铁站怎么走？」" },
+  { role: "ai", yue: "「早晨」系朝头早嘅问候，「午安」就系晏昼，黄昏后讲「晚安」都得㗎。", man: "「早晨」是早上的问候，「午安」是下午，黄昏后说「晚安」也可以。" },
+  { role: "ai", yue: "你讲得唔错㗎！听多啲、讲多啲，粤语就会越嚟越顺。今日想学边方面呀？", man: "你说得不错哦！多听多说，粤语会越来越顺。今天想学哪方面呀？" },
+  { role: "ai", yue: "想知某句普通话点讲粤语？直接打畀我，例如「谢谢」点讲？我会话你知！", man: "想知道某句普通话粤语怎么说？直接打给我，比如「谢谢」怎么说？我告诉你！" },
+  { role: "ai", yue: "唔该同多谢点分？「唔该」系请人帮忙，「多谢」系收人礼物，记住咗未？", man: "「唔该」和「多谢」怎么分？「唔该」是请人帮忙，「多谢」是收人礼物，记住了吗？" },
 ];
 
+/** 本地兜底回复：避免连续两次出现同一句 */
+const lastGenericRef = { i: -1 };
 function localReply(text: string): ChatMsg {
   const hit = FALLBACKS.find((f) => f.k.test(text));
-  return hit
-    ? { role: "ai", yue: hit.yue, man: hit.man }
-    : LOCAL_GENERIC[Math.floor(Math.random() * LOCAL_GENERIC.length)];
+  if (hit) return { role: "ai", yue: hit.yue, man: hit.man };
+  let i = Math.floor(Math.random() * LOCAL_GENERIC.length);
+  if (LOCAL_GENERIC.length > 1 && i === lastGenericRef.i) i = (i + 1) % LOCAL_GENERIC.length;
+  lastGenericRef.i = i;
+  return LOCAL_GENERIC[i];
 }
 
 /** 解析 AI 回复中的「粤语：/普通话：」两段 */
@@ -123,7 +133,10 @@ function AiChatSheet({ onClose }: { onClose: () => void }) {
   }, []);
 
   useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+    const list = listRef.current;
+    if (list && typeof list.scrollTo === "function") {
+      list.scrollTo({ top: list.scrollHeight, behavior: "smooth" });
+    }
   }, [msgs, sending]);
 
   function handleClose() {
@@ -179,7 +192,7 @@ function AiChatSheet({ onClose }: { onClose: () => void }) {
     try {
       const reply = hasKey || authed ? await callAi(history) : localReply(text);
       setMsgs((prev) => [...prev, reply]);
-      setTimeout(() => speak(reply.yue), 200);
+      setTimeout(() => speakAiReply(reply.yue), 200);
     } catch (e) {
       const detail = e instanceof Error && e.message ? e.message : "";
       setMsgs((prev) => [
@@ -224,144 +237,154 @@ function AiChatSheet({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Sheet title="AI语音助手" onClose={handleClose}>
-      <div className="flex items-center justify-between mb-3">
-        {hasKey ? (
-          <span className="text-xs text-gray-400">直连 AI · {cfg.model}</span>
-        ) : authed ? (
-          <span className="text-xs text-gray-400">已连接 AI 老师（服务端）</span>
-        ) : (
-          <button
-            onClick={() => setShowAuth(true)}
-            className="text-xs text-[#2B5CE6] bg-[#EEF3FF] px-2.5 py-1 rounded-full font-medium active:scale-95 transition-transform"
-          >
-            本地练习模式 · 点此登录，解锁 AI 老师
-          </button>
-        )}
-        <div className="flex items-center gap-2">
+    <FullPage
+      title="AI语音助手"
+      subtitle="粤语对话练习"
+      onClose={handleClose}
+      right={
+        <>
           <button
             onClick={() => {
               stopSpeak();
               setMsgs([WELCOME]);
             }}
-            className="w-8 h-8 rounded-full bg-white shadow-sm flex items-center justify-center active:scale-90 transition-transform"
+            className="w-8 h-8 rounded-full bg-white/15 text-white flex items-center justify-center active:scale-90 transition-transform"
             title="清空对话"
           >
-            <Trash2 size={14} className="text-gray-500" />
+            <Trash2 size={14} />
           </button>
           <button
             onClick={() => setShowCfg((v) => !v)}
-            className="w-8 h-8 rounded-full bg-white shadow-sm flex items-center justify-center active:scale-90 transition-transform"
+            className="w-8 h-8 rounded-full bg-white/15 text-white flex items-center justify-center active:scale-90 transition-transform"
             title="AI 接口设置"
           >
-            <Settings size={14} className="text-[#2B5CE6]" />
+            <Settings size={14} />
           </button>
-        </div>
-      </div>
-
-      {showCfg && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm mb-3 flex flex-col gap-2">
-          <p className="text-xs text-gray-500 leading-relaxed">
-            登录用户默认使用服务端 AI（无需 Key）。也可以填自己的 OpenAI 兼容接口（DeepSeek / 智谱 /
-            通义等）直连，Key 仅保存在本机浏览器。
-          </p>
-          <input
-            value={cfg.baseUrl}
-            onChange={(e) => setCfg({ ...cfg, baseUrl: e.target.value })}
-            placeholder="API 地址（以 /v1 结尾）"
-            className="bg-[#f8faff] rounded-xl px-3 py-2 text-sm outline-none"
-          />
-          <input
-            value={cfg.apiKey}
-            onChange={(e) => setCfg({ ...cfg, apiKey: e.target.value })}
-            type="password"
-            placeholder="API Key"
-            className="bg-[#f8faff] rounded-xl px-3 py-2 text-sm outline-none"
-          />
-          <input
-            value={cfg.model}
-            onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
-            placeholder="模型名"
-            className="bg-[#f8faff] rounded-xl px-3 py-2 text-sm outline-none"
-          />
-          <button
-            onClick={() => setShowCfg(false)}
-            className="py-2 rounded-xl font-bold text-white text-sm active:scale-95 transition-transform"
-            style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
-          >
-            保存
-          </button>
-        </div>
-      )}
-
-      <div ref={listRef} className="flex flex-col gap-3 min-h-[32vh] max-h-[46vh] overflow-y-auto mb-2 pr-1">
-        {msgs.map((m, i) =>
-          m.role === "ai" ? (
-            <div
-              key={i}
-              className="self-start max-w-[85%] bg-white rounded-2xl rounded-bl-md px-4 py-3 shadow-sm shadow-blue-50"
-            >
-              <p className="text-[#1a1a2e] text-sm leading-relaxed whitespace-pre-wrap">{m.yue}</p>
-              {m.man && <p className="text-gray-400 text-xs mt-1.5 leading-relaxed">{m.man}</p>}
-              <button
-                onClick={() => speak(m.yue)}
-                className="mt-2 flex items-center gap-1 text-[#2B5CE6] text-xs bg-[#EEF3FF] px-2.5 py-1 rounded-full active:scale-95 transition-transform"
-              >
-                <Volume2 size={12} /> 再听一次
-              </button>
-            </div>
+        </>
+      }
+    >
+      <div className="flex-1 min-h-0 flex flex-col px-4">
+        <div className="flex items-center justify-between mb-3 flex-shrink-0 pt-3">
+          {hasKey ? (
+            <span className="text-xs text-gray-400">直连 AI · {cfg.model}</span>
+          ) : authed ? (
+            <span className="text-xs text-gray-400">已连接 AI 老师（服务端）</span>
           ) : (
-            <div
-              key={i}
-              className="self-end max-w-[85%] rounded-2xl rounded-br-md px-4 py-3 text-white text-sm leading-relaxed"
+            <button
+              onClick={() => setShowAuth(true)}
+              className="text-xs text-[#2B5CE6] bg-[#EEF3FF] px-2.5 py-1 rounded-full font-medium active:scale-95 transition-transform"
+            >
+              本地练习模式 · 点此登录，解锁 AI 老师
+            </button>
+          )}
+        </div>
+
+        {showCfg && (
+          <div className="bg-white rounded-2xl p-4 shadow-sm mb-3 flex flex-col gap-2 flex-shrink-0">
+            <p className="text-xs text-gray-500 leading-relaxed">
+              登录用户默认使用服务端 AI（无需 Key）。也可以填自己的 OpenAI 兼容接口（DeepSeek / 智谱 /
+              通义等）直连，Key 仅保存在本机浏览器。
+            </p>
+            <input
+              value={cfg.baseUrl}
+              onChange={(e) => setCfg({ ...cfg, baseUrl: e.target.value })}
+              placeholder="API 地址（以 /v1 结尾）"
+              className="bg-[#f8faff] rounded-xl px-3 py-2 text-sm outline-none"
+            />
+            <input
+              value={cfg.apiKey}
+              onChange={(e) => setCfg({ ...cfg, apiKey: e.target.value })}
+              type="password"
+              placeholder="API Key"
+              className="bg-[#f8faff] rounded-xl px-3 py-2 text-sm outline-none"
+            />
+            <input
+              value={cfg.model}
+              onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
+              placeholder="模型名"
+              className="bg-[#f8faff] rounded-xl px-3 py-2 text-sm outline-none"
+            />
+            <button
+              onClick={() => setShowCfg(false)}
+              className="py-2 rounded-xl font-bold text-white text-sm active:scale-95 transition-transform"
               style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
             >
-              {m.yue}
-            </div>
-          )
-        )}
-        {sending && (
-          <div className="self-start bg-white rounded-2xl px-4 py-3 shadow-sm shadow-blue-50 text-gray-400 text-sm">
-            AI 老师思考中…
+              保存
+            </button>
           </div>
         )}
+
+        <div ref={listRef} className="flex-1 min-h-0 flex flex-col gap-3 overflow-y-auto mb-2 pr-1">
+          {msgs.map((m, i) =>
+            m.role === "ai" ? (
+              <div
+                key={i}
+                className="self-start max-w-[85%] bg-white rounded-2xl rounded-bl-md px-4 py-3 shadow-sm shadow-blue-50"
+              >
+                <p className="text-[#1a1a2e] text-sm leading-relaxed whitespace-pre-wrap">{m.yue}</p>
+                {m.man && <p className="text-gray-400 text-xs mt-1.5 leading-relaxed">{m.man}</p>}
+                <button
+                  onClick={() => speakAiReply(m.yue)}
+                  className="mt-2 flex items-center gap-1 text-[#2B5CE6] text-xs bg-[#EEF3FF] px-2.5 py-1 rounded-full active:scale-95 transition-transform"
+                >
+                  <Volume2 size={12} /> 再听一次
+                </button>
+              </div>
+            ) : (
+              <div
+                key={i}
+                className="self-end max-w-[85%] rounded-2xl rounded-br-md px-4 py-3 text-white text-sm leading-relaxed"
+                style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
+              >
+                {m.yue}
+              </div>
+            )
+          )}
+          {sending && (
+            <div className="self-start bg-white rounded-2xl px-4 py-3 shadow-sm shadow-blue-50 text-gray-400 text-sm">
+              AI 老师思考中…
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="flex items-center gap-2 pb-2">
-        {SR && (
+      <div className="flex-shrink-0 px-4 pb-6 pt-1">
+        <div className="flex items-center gap-2">
+          {SR && (
+            <button
+              onClick={toggleListen}
+              className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 active:scale-90 transition-transform ${
+                listening ? "bg-red-500 animate-pulse" : "bg-white shadow-sm"
+              }`}
+              title={listening ? "停止录音" : "讲粤语"}
+            >
+              <Mic size={18} className={listening ? "text-white" : "text-[#2B5CE6]"} />
+            </button>
+          )}
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") send();
+            }}
+            placeholder={listening ? "听到你讲嘢啦…" : "用粤语或普通话打字"}
+            disabled={sending}
+            className="flex-1 bg-white rounded-full px-4 py-2.5 text-sm text-[#1a1a2e] outline-none placeholder:text-gray-400 disabled:opacity-60"
+          />
           <button
-            onClick={toggleListen}
-            className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 active:scale-90 transition-transform ${
-              listening ? "bg-red-500 animate-pulse" : "bg-white shadow-sm"
-            }`}
-            title={listening ? "停止录音" : "讲粤语"}
+            onClick={() => send()}
+            disabled={sending || !input.trim()}
+            className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 active:scale-90 transition-transform disabled:opacity-40"
+            style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
+            title="发送"
           >
-            <Mic size={18} className={listening ? "text-white" : "text-[#2B5CE6]"} />
+            <Send size={16} className="text-white" />
           </button>
-        )}
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") send();
-          }}
-          placeholder={listening ? "听到你讲嘢啦…" : "用粤语或普通话打字"}
-          disabled={sending}
-          className="flex-1 bg-white rounded-full px-4 py-2.5 text-sm text-[#1a1a2e] outline-none placeholder:text-gray-400 disabled:opacity-60"
-        />
-        <button
-          onClick={() => send()}
-          disabled={sending || !input.trim()}
-          className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 active:scale-90 transition-transform disabled:opacity-40"
-          style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
-          title="发送"
-        >
-          <Send size={16} className="text-white" />
-        </button>
+        </div>
       </div>
 
       {showAuth && <AuthSheet onClose={() => setShowAuth(false)} />}
-    </Sheet>
+    </FullPage>
   );
 }
 
@@ -553,35 +576,37 @@ function PracticeSheet({ onClose }: { onClose: () => void }) {
   /* 未开始 */
   if (!started) {
     return (
-      <Sheet title="跟读训练" onClose={onClose}>
-        <div className="flex flex-col items-center gap-4 py-4">
-          <div
-            className="w-20 h-20 rounded-full flex items-center justify-center shadow-lg shadow-blue-200"
-            style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
-          >
-            <Mic size={36} className="text-white" />
+      <FullPage title="跟读训练" subtitle="听 · 读 · 评分" onClose={onClose}>
+        <div className="flex-1 overflow-y-auto px-4 py-5">
+          <div className="flex flex-col items-center gap-4 py-2">
+            <div
+              className="w-20 h-20 rounded-full flex items-center justify-center shadow-lg shadow-blue-200"
+              style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
+            >
+              <Mic size={36} className="text-white" />
+            </div>
+            <p className="text-lg font-bold text-[#1a1a2e]">跟读训练模式</p>
+            <div className="w-full bg-white rounded-2xl p-4 text-sm text-gray-500 leading-7 shadow-sm shadow-blue-50">
+              <p>① 🔊 听标准发音（可切 🐢 慢速）</p>
+              <p>② 🎤 点大按钮，跟住读一句</p>
+              <p>③ ▶ 回放自己的录音对比</p>
+              <p>④ 🎯 AI 听你讲，发音打分</p>
+            </div>
+            {!SRC_OK && (
+              <p className="w-full text-xs text-amber-600 bg-amber-50 rounded-xl px-3 py-2">
+                ⚠️ 当前浏览器不支持语音识别评分（跟读录音仍可用），建议用 Chrome 或 Edge 打开。
+              </p>
+            )}
+            <button
+              onClick={start}
+              className="w-full py-3.5 rounded-xl font-bold text-white text-base active:scale-95 transition-all"
+              style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
+            >
+              🚀 开始练习（10 句）
+            </button>
           </div>
-          <p className="text-lg font-bold text-[#1a1a2e]">跟读训练模式</p>
-          <div className="w-full bg-white rounded-2xl p-4 text-sm text-gray-500 leading-7 shadow-sm shadow-blue-50">
-            <p>① 🔊 听标准发音（可切 🐢 慢速）</p>
-            <p>② 🎤 点大按钮，跟住读一句</p>
-            <p>③ ▶ 回放自己的录音对比</p>
-            <p>④ 🎯 AI 听你讲，发音打分</p>
-          </div>
-          {!SRC_OK && (
-            <p className="w-full text-xs text-amber-600 bg-amber-50 rounded-xl px-3 py-2">
-              ⚠️ 当前浏览器不支持语音识别评分（跟读录音仍可用），建议用 Chrome 或 Edge 打开。
-            </p>
-          )}
-          <button
-            onClick={start}
-            className="w-full py-3.5 rounded-xl font-bold text-white text-base active:scale-95 transition-all"
-            style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
-          >
-            🚀 开始练习（10 句）
-          </button>
         </div>
-      </Sheet>
+      </FullPage>
     );
   }
 
@@ -590,162 +615,172 @@ function PracticeSheet({ onClose }: { onClose: () => void }) {
     const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
     const recs = recCount - baseRec;
     return (
-      <Sheet title="跟读训练" onClose={onClose}>
-        <div className="flex flex-col items-center gap-4 py-6">
-          <div className="w-20 h-20 rounded-full bg-[#2B5CE6] flex items-center justify-center shadow-xl shadow-blue-200">
-            <Check size={40} className="text-white" strokeWidth={3} />
-          </div>
-          <p className="text-xl font-black text-[#1a1a2e]">本轮跟读完成！</p>
-          {avg !== null && (
-            <>
-              <p className="text-4xl font-black text-[#2B5CE6]">
-                {avg}
-                <span className="text-sm text-gray-400 font-normal"> 平均分</span>
-              </p>
-              <p className="text-amber-500 text-lg tracking-widest">
-                {avg >= 85 ? "★★★★★" : avg >= 70 ? "★★★★" : avg >= 50 ? "★★★" : "★★"}
-              </p>
-            </>
-          )}
-          <p className="text-gray-500 text-sm">
-            {avg === null
-              ? "完成跟读！下次试试 🎯 AI 评分"
-              : avg >= 85
-              ? "犀利！发音好正 🇭🇰"
-              : avg >= 70
-              ? "好嘢！保持呢个节奏 💪"
-              : "多听多讲，好快上手！"}
-          </p>
-          <p className="text-gray-400 text-xs">🎤 本次录音 {recs} 次 · 跟读总数 {recCount} 次</p>
-          <div className="flex gap-3 w-full max-w-xs">
-            <button
-              onClick={start}
-              className="flex-1 flex items-center justify-center gap-2 bg-[#2B5CE6] text-white px-6 py-3 rounded-xl font-bold active:scale-95"
-            >
-              <RotateCcw size={16} /> 再练一轮
-            </button>
-            <button
-              onClick={onClose}
-              className="flex-1 bg-white border border-gray-200 text-[#1a1a2e] px-6 py-3 rounded-xl font-bold active:scale-95"
-            >
-              返回
-            </button>
+      <FullPage title="跟读训练" onClose={onClose}>
+        <div className="flex-1 overflow-y-auto px-4 py-6">
+          <div className="flex flex-col items-center gap-4 py-6">
+            <div className="w-20 h-20 rounded-full bg-[#2B5CE6] flex items-center justify-center shadow-xl shadow-blue-200">
+              <Check size={40} className="text-white" strokeWidth={3} />
+            </div>
+            <p className="text-xl font-black text-[#1a1a2e]">本轮跟读完成！</p>
+            {avg !== null && (
+              <>
+                <p className="text-4xl font-black text-[#2B5CE6]">
+                  {avg}
+                  <span className="text-sm text-gray-400 font-normal"> 平均分</span>
+                </p>
+                <p className="text-amber-500 text-lg tracking-widest">
+                  {avg >= 85 ? "★★★★★" : avg >= 70 ? "★★★★" : avg >= 50 ? "★★★" : "★★"}
+                </p>
+              </>
+            )}
+            <p className="text-gray-500 text-sm">
+              {avg === null
+                ? "完成跟读！下次试试 🎯 AI 评分"
+                : avg >= 85
+                ? "犀利！发音好正 🇭🇰"
+                : avg >= 70
+                ? "好嘢！保持呢个节奏 💪"
+                : "多听多讲，好快上手！"}
+            </p>
+            <p className="text-gray-400 text-xs">🎤 本次录音 {recs} 次 · 跟读总数 {recCount} 次</p>
+            <div className="flex gap-3 w-full max-w-xs">
+              <button
+                onClick={start}
+                className="flex-1 flex items-center justify-center gap-2 bg-[#2B5CE6] text-white px-6 py-3 rounded-xl font-bold active:scale-95"
+              >
+                <RotateCcw size={16} /> 再练一轮
+              </button>
+              <button
+                onClick={onClose}
+                className="flex-1 bg-white border border-gray-200 text-[#1a1a2e] px-6 py-3 rounded-xl font-bold active:scale-95"
+              >
+                返回
+              </button>
+            </div>
           </div>
         </div>
-      </Sheet>
+      </FullPage>
     );
   }
 
   /* 练习中 */
   return (
-    <Sheet title="跟读训练" onClose={onClose}>
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-gray-400 font-medium">
-            第 {idx + 1} / {list.length} 句 · {it.src}
-          </span>
-          <span className="text-xs text-[#2B5CE6] font-bold">🎤 {recCount} 次</span>
-        </div>
-
-        <div className="bg-white rounded-3xl p-5 shadow-lg shadow-blue-100 flex flex-col items-center gap-2.5">
-          <button
-            onClick={() => speak(it.yue)}
-            className="text-5xl font-black text-[#1a1a2e] tracking-widest active:scale-95 transition-transform"
-          >
-            {it.yue}
-          </button>
-          <span className="text-[#2B5CE6] text-sm font-mono font-medium">{it.jyut}</span>
-          <span className="text-gray-400 text-xs">{it.man}</span>
-          <div className="flex gap-2 mt-1">
-            <button
-              onClick={() => speak(it.yue, 1)}
-              className="flex items-center gap-1 text-xs font-bold text-[#2B5CE6] bg-[#EEF3FF] px-3 py-1.5 rounded-full active:scale-95 transition-transform"
-            >
-              <Volume2 size={13} /> 标准音
-            </button>
-            <button
-              onClick={() => speak(it.yue, 0.6)}
-              className="flex items-center gap-1 text-xs font-bold text-[#2B5CE6] bg-[#EEF3FF] px-3 py-1.5 rounded-full active:scale-95 transition-transform"
-            >
-              🐢 慢速
-            </button>
-            <button
-              onClick={() => speak(it.yue, 1.3)}
-              className="flex items-center gap-1 text-xs font-bold text-[#2B5CE6] bg-[#EEF3FF] px-3 py-1.5 rounded-full active:scale-95 transition-transform"
-            >
-              🐇 快速
-            </button>
+    <FullPage
+      title="跟读训练"
+      onClose={onClose}
+      right={
+        <span className="bg-white/15 rounded-xl px-3 py-1.5 text-white text-sm font-mono font-bold">
+          {idx + 1} / {list.length}
+        </span>
+      }
+    >
+      <div className="flex-1 overflow-y-auto px-4 py-4">
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-400 font-medium">{it.src}</span>
+            <span className="text-xs text-[#2B5CE6] font-bold">🎤 {recCount} 次</span>
           </div>
-        </div>
 
-        <div className="bg-white rounded-3xl p-5 shadow-sm shadow-blue-50 flex flex-col items-center gap-3">
-          {recording && <p className="text-red-500 text-xs font-bold">● 录音中…读完再点一下停止</p>}
-          <button
-            onClick={toggleRec}
-            className="w-20 h-20 rounded-full flex items-center justify-center text-white shadow-xl active:scale-95 transition-all"
-            style={
-              recording
-                ? { background: "#ef4444", boxShadow: "0 12px 24px -6px rgba(239,68,68,0.5)" }
-                : { background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)", boxShadow: "0 12px 24px -6px rgba(43,92,230,0.5)" }
-            }
-          >
-            {recording ? <Square size={28} fill="currentColor" /> : <Mic size={28} />}
-          </button>
-          <div className="flex gap-2">
-            {recUrl && (
+          <div className="bg-white rounded-3xl p-5 shadow-lg shadow-blue-100 flex flex-col items-center gap-2.5">
+            <button
+              onClick={() => speak(it.yue)}
+              className="text-5xl font-black text-[#1a1a2e] tracking-widest active:scale-95 transition-transform"
+            >
+              {it.yue}
+            </button>
+            <span className="text-[#2B5CE6] text-sm font-mono font-medium">{it.jyut}</span>
+            <span className="text-gray-400 text-xs">{it.man}</span>
+            <div className="flex gap-2 mt-1">
               <button
-                onClick={playRec}
-                className="flex items-center gap-1 text-xs font-bold text-[#1a1a2e] bg-gray-100 px-3 py-1.5 rounded-full active:scale-95 transition-transform"
+                onClick={() => speak(it.yue, 1)}
+                className="flex items-center gap-1 text-xs font-bold text-[#2B5CE6] bg-[#EEF3FF] px-3 py-1.5 rounded-full active:scale-95 transition-transform"
               >
-                <Play size={13} /> 我的录音
+                <Volume2 size={13} /> 标准音
               </button>
-            )}
-            <button
-              onClick={grade}
-              className="flex items-center gap-1 text-xs font-bold text-[#2B5CE6] bg-[#EEF3FF] px-3 py-1.5 rounded-full active:scale-95 transition-transform"
-            >
-              <Sparkles size={13} /> {listening ? "识别中…" : "AI 评分"}
-            </button>
-          </div>
-          {errMsg && <p className="text-xs text-red-500">{errMsg}</p>}
-          {score !== null && (
-            <div className="w-full bg-[#f8faff] rounded-xl p-3 text-center">
-              <p className="text-3xl font-black text-[#2B5CE6]">
-                {score}
-                <span className="text-sm text-gray-400 font-normal"> 分</span>
-              </p>
-              <p className="text-amber-500 text-sm mt-0.5 tracking-widest">
-                {score >= 85 ? "★★★★★" : score >= 70 ? "★★★★" : score >= 50 ? "★★★" : "★★"}
-              </p>
-              <p className="text-gray-500 text-xs mt-1">
-                {score >= 85
-                  ? "犀利！好接近母语者 🎉"
-                  : score >= 70
-                  ? "唔錯！发音基本到位 💪"
-                  : score >= 50
-                  ? "基本听得出，再练练音调"
-                  : "唔緊要，先听慢速多跟几遍"}
-              </p>
-              <p className="text-gray-400 text-xs mt-1">👂 AI 听到你讲：「{transcript || "(冇听到内容)"}」</p>
+              <button
+                onClick={() => speak(it.yue, 0.6)}
+                className="flex items-center gap-1 text-xs font-bold text-[#2B5CE6] bg-[#EEF3FF] px-3 py-1.5 rounded-full active:scale-95 transition-transform"
+              >
+                🐢 慢速
+              </button>
+              <button
+                onClick={() => speak(it.yue, 1.3)}
+                className="flex items-center gap-1 text-xs font-bold text-[#2B5CE6] bg-[#EEF3FF] px-3 py-1.5 rounded-full active:scale-95 transition-transform"
+              >
+                🐇 快速
+              </button>
             </div>
-          )}
-        </div>
+          </div>
 
-        <button
-          onClick={next}
-          className="w-full py-3.5 rounded-xl font-bold text-white text-base active:scale-95 transition-all"
-          style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
-        >
-          下一句 ›
-        </button>
-        <button
-          onClick={onClose}
-          className="w-full py-3 rounded-xl font-bold text-gray-400 text-sm bg-white border border-gray-100 active:scale-95"
-        >
-          结束练习
-        </button>
+          <div className="bg-white rounded-3xl p-5 shadow-sm shadow-blue-50 flex flex-col items-center gap-3">
+            {recording && <p className="text-red-500 text-xs font-bold">● 录音中…读完再点一下停止</p>}
+            <button
+              onClick={toggleRec}
+              className="w-20 h-20 rounded-full flex items-center justify-center text-white shadow-xl active:scale-95 transition-all"
+              style={
+                recording
+                  ? { background: "#ef4444", boxShadow: "0 12px 24px -6px rgba(239,68,68,0.5)" }
+                  : { background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)", boxShadow: "0 12px 24px -6px rgba(43,92,230,0.5)" }
+              }
+            >
+              {recording ? <Square size={28} fill="currentColor" /> : <Mic size={28} />}
+            </button>
+            <div className="flex gap-2">
+              {recUrl && (
+                <button
+                  onClick={playRec}
+                  className="flex items-center gap-1 text-xs font-bold text-[#1a1a2e] bg-gray-100 px-3 py-1.5 rounded-full active:scale-95 transition-transform"
+                >
+                  <Play size={13} /> 我的录音
+                </button>
+              )}
+              <button
+                onClick={grade}
+                className="flex items-center gap-1 text-xs font-bold text-[#2B5CE6] bg-[#EEF3FF] px-3 py-1.5 rounded-full active:scale-95 transition-transform"
+              >
+                <Sparkles size={13} /> {listening ? "识别中…" : "AI 评分"}
+              </button>
+            </div>
+            {errMsg && <p className="text-xs text-red-500">{errMsg}</p>}
+            {score !== null && (
+              <div className="w-full bg-[#f8faff] rounded-xl p-3 text-center">
+                <p className="text-3xl font-black text-[#2B5CE6]">
+                  {score}
+                  <span className="text-sm text-gray-400 font-normal"> 分</span>
+                </p>
+                <p className="text-amber-500 text-sm mt-0.5 tracking-widest">
+                  {score >= 85 ? "★★★★★" : score >= 70 ? "★★★★" : score >= 50 ? "★★★" : "★★"}
+                </p>
+                <p className="text-gray-500 text-xs mt-1">
+                  {score >= 85
+                    ? "犀利！好接近母语者 🎉"
+                    : score >= 70
+                    ? "唔錯！发音基本到位 💪"
+                    : score >= 50
+                    ? "基本听得出，再练练音调"
+                    : "唔緊要，先听慢速多跟几遍"}
+                </p>
+                <p className="text-gray-400 text-xs mt-1">👂 AI 听到你讲：「{transcript || "(冇听到内容)"}」</p>
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={next}
+            className="w-full py-3.5 rounded-xl font-bold text-white text-base active:scale-95 transition-all"
+            style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
+          >
+            下一句 ›
+          </button>
+          <button
+            onClick={onClose}
+            className="w-full py-3 rounded-xl font-bold text-gray-400 text-sm bg-white border border-gray-100 active:scale-95"
+          >
+            结束练习
+          </button>
+        </div>
       </div>
-    </Sheet>
+    </FullPage>
   );
 }
 

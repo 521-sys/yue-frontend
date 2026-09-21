@@ -2,11 +2,14 @@ import { useSyncExternalStore } from "react";
 import {
   login as apiLogin,
   register as apiRegister,
+  phoneLogin as apiPhoneLogin,
+  phoneRegister as apiPhoneRegister,
   fetchState,
   pushState,
   setToken,
   clearToken,
   getToken,
+  type AuthResponse,
 } from "./api";
 
 export interface LearningState {
@@ -21,8 +24,6 @@ export interface LearningState {
   todayReviewedDate: string;
   dailyGoal: number; // 每日目标（词）
   activity: Record<string, number>; // date -> 当天学习动作数
-  coins: number; // 铜板余额
-  owned: string[]; // 已购商品名
 }
 
 const KEY = "yueLearnReactV1";
@@ -40,8 +41,6 @@ const DEFAULT: LearningState = {
   todayReviewedDate: "",
   dailyGoal: 30,
   activity: {},
-  coins: 128,
-  owned: [],
 };
 
 function today(): string {
@@ -128,14 +127,6 @@ export function markSeen(id: string) {
   save({ ...state, seen: [...state.seen, id] });
 }
 
-/** 消费铜板购买商品，余额不足返回 false */
-export function buyItem(name: string, coins: number): boolean {
-  if (state.owned.includes(name)) return false;
-  if (state.coins < coins) return false;
-  save({ ...state, coins: state.coins - coins, owned: [...state.owned, name] });
-  return true;
-}
-
 /** 从生词本移除（已掌握） */
 export function removeStuck(id: string) {
   if (!state.stuck.includes(id)) return;
@@ -183,20 +174,36 @@ function scheduleUpload() {
   }, 1500);
 }
 
+/** 登录成功后的公共处理：存 token → 拉取云端状态覆盖本地（last-write-wins） */
+async function syncAfterLogin(r: AuthResponse): Promise<{ username: string }> {
+  setToken(r.token);
+  try {
+    const cloud = await fetchState();
+    if (cloud.hasCloudData && cloud.state) {
+      skipUpload = true;
+      save({ ...DEFAULT, ...(cloud.state as LearningState) });
+      skipUpload = false;
+    }
+  } catch {
+    /* 云端拉取失败不阻塞登录 */
+  }
+  return { username: r.username };
+}
+
 /** 登录并拉取云端状态覆盖本地（last-write-wins，整体覆盖） */
 export async function loginAndSync(
   username: string,
   password: string
 ): Promise<{ username: string }> {
-  const r = await apiLogin(username, password);
-  setToken(r.token);
-  const cloud = await fetchState();
-  if (cloud.hasCloudData && cloud.state) {
-    skipUpload = true;
-    save({ ...DEFAULT, ...(cloud.state as LearningState) });
-    skipUpload = false;
-  }
-  return { username: r.username };
+  return syncAfterLogin(await apiLogin(username, password));
+}
+
+/** 手机号登录并同步云端 */
+export async function phoneLoginAndSync(
+  phone: string,
+  password: string
+): Promise<{ username: string }> {
+  return syncAfterLogin(await apiPhoneLogin(phone, password));
 }
 
 /** 注册新账号（新用户无云端数据，注册即上传当前本地状态作为初始记录） */
@@ -205,6 +212,21 @@ export async function registerAndSync(
   password: string
 ): Promise<{ username: string }> {
   const r = await apiRegister(username, password);
+  setToken(r.token);
+  try {
+    await pushState(state);
+  } catch (e) {
+    console.warn("初始状态上传失败：", e);
+  }
+  return { username: r.username };
+}
+
+/** 手机号注册（新用户无云端数据，注册即上传当前本地状态作为初始记录） */
+export async function phoneRegisterAndSync(
+  phone: string,
+  password: string
+): Promise<{ username: string }> {
+  const r = await apiPhoneRegister(phone, password);
   setToken(r.token);
   try {
     await pushState(state);

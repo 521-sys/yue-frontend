@@ -32,6 +32,50 @@ export function Sheet({
   );
 }
 
+/** 全屏交互页面容器（AI 语音 / 跟读训练等交互功能使用，替代半屏抽屉） */
+export function FullPage({
+  title,
+  subtitle,
+  onClose,
+  right,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  onClose: () => void;
+  right?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col items-center bg-[#f0f4ff] animate-fade-in">
+      <div className="w-full max-w-[430px] h-full flex flex-col">
+        {/* 顶部渐变栏 */}
+        <div
+          className="px-4 pt-10 pb-4 flex-shrink-0 relative overflow-hidden"
+          style={{ background: "linear-gradient(160deg, #1a3fbf 0%, #2B5CE6 50%, #4a7cf7 100%)" }}
+        >
+          <div className="pointer-events-none absolute -top-10 -right-10 w-44 h-44 rounded-full bg-white/5" />
+          <div className="pointer-events-none absolute top-4 -right-4 w-28 h-28 rounded-full bg-white/5" />
+          <div className="relative z-10 flex items-center justify-between">
+            <button
+              onClick={onClose}
+              className="text-white/85 text-sm font-medium active:scale-95 transition-transform"
+            >
+              ✕ 退出
+            </button>
+            <div className="text-center">
+              <p className="text-white font-bold text-lg leading-tight">{title}</p>
+              {subtitle && <p className="text-white/70 text-xs mt-0.5">{subtitle}</p>}
+            </div>
+            <div className="flex items-center gap-2 min-w-[64px] justify-end">{right}</div>
+          </div>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 /** 发音按钮 */
 export function SoundButton({
   text,

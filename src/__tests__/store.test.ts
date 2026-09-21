@@ -1,6 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import {
-  buyItem,
   getState,
   markLearned,
   markReviewed,
@@ -82,46 +81,6 @@ describe("store.ts 状态层", () => {
     });
   });
 
-  describe("buyItem", () => {
-    it("余额不足返回 false 且不修改 owned / coins", () => {
-      const before = getState();
-      expect(before.coins).toBe(128);
-      expect(before.owned).toEqual([]);
-
-      const ok = buyItem("宝箱", 200);
-      expect(ok).toBe(false);
-
-      const after = getState();
-      expect(after.coins).toBe(128);
-      expect(after.owned).toEqual([]);
-    });
-
-    it("重复购买已拥有商品返回 false", () => {
-      expect(buyItem("皮肤A", 50)).toBe(true);
-      expect(getState().owned).toEqual(["皮肤A"]);
-      // 再次购买同名商品
-      const ok = buyItem("皮肤A", 50);
-      expect(ok).toBe(false);
-      // owned 不变，coins 也不再扣
-      expect(getState().owned).toEqual(["皮肤A"]);
-      expect(getState().coins).toBe(78);
-    });
-
-    it("购买成功扣减 coins 并加入 owned", () => {
-      const ok = buyItem("道具X", 30);
-      expect(ok).toBe(true);
-      const s = getState();
-      expect(s.coins).toBe(98);
-      expect(s.owned).toEqual(["道具X"]);
-
-      // 再买一件不同商品
-      expect(buyItem("道具Y", 20)).toBe(true);
-      const s2 = getState();
-      expect(s2.coins).toBe(78);
-      expect(s2.owned).toEqual(["道具X", "道具Y"]);
-    });
-  });
-
   describe("removeStuck", () => {
     it("从生词本中移除指定 id", () => {
       markStuck("w5");
@@ -156,7 +115,6 @@ describe("store.ts 状态层", () => {
       markLearned("w1");
       markStuck("w2");
       markReviewed("w3");
-      buyItem("物品", 50);
       setDailyGoal(99);
       // 状态被污染
       expect(getState().learned.length).toBeGreaterThan(0);
@@ -167,8 +125,6 @@ describe("store.ts 状态层", () => {
       expect(s.learned).toEqual([]);
       expect(s.stuck).toEqual([]);
       expect(s.reviewed).toEqual([]);
-      expect(s.coins).toBe(128);
-      expect(s.owned).toEqual([]);
       expect(s.dailyGoal).toBe(30);
       expect(s.todayLearned).toBe(0);
       expect(s.todayReviewed).toBe(0);
@@ -303,8 +259,6 @@ describe("store.ts 状态层", () => {
         todayReviewedDate: "",
         dailyGoal: 30,
         activity: {},
-        coins: 128,
-        owned: [],
       };
       expect(s).toEqual(expected);
     });

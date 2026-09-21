@@ -1,255 +1,52 @@
 import { useEffect, useState } from "react";
-import {
-  Settings,
-  BookMarked,
-  Trophy,
-  Zap,
-  Target,
-  ChevronRight,
-  Star,
-  Calendar,
-  TrendingUp,
-  LogIn,
-  LogOut,
-} from "lucide-react";
-import { useLearning, setDailyGoal, resetAll, isLoggedin, currentUser, logout } from "../lib/store";
-import { WORDS } from "../data/words";
-import { ProfileSheet, ProfileSheetKind, ACHIEVEMENTS } from "../components/ProfileSheets";
+import { LogIn, LogOut, Pencil, RotateCcw, Settings, UserRound } from "lucide-react";
 import { AuthSheet } from "../components/AuthSheet";
-import { AUTH_CHANGED_EVENT } from "../lib/api";
+import { Sheet } from "../components/Sheet";
+import { currentUser, isLoggedin, logout, resetAll, setDailyGoal, useLearning } from "../lib/store";
+import { AUTH_CHANGED_EVENT, getProfile, updateProfile, type Profile } from "../lib/api";
 
-const WEEK_CN = ["一", "二", "三", "四", "五", "六", "日"];
+export const PRESET_AVATARS = ["😊", "😎", "🤠", "🦊", "🐼", "🐯", "🦄", "🐨"];
 
 export default function ProfileScreen() {
   const s = useLearning();
-  const [sheet, setSheet] = useState<ProfileSheetKind>(null);
   const [authOpen, setAuthOpen] = useState(false);
-  // 登录状态：监听全局事件，登录/登出/token 过期时即时刷新显示
+  const [editOpen, setEditOpen] = useState(false);
   const [authState, setAuthState] = useState(() => isLoggedin());
+  const [profile, setProfile] = useState<Profile | null>(null);
+
   useEffect(() => {
     const sync = () => setAuthState(isLoggedin());
     window.addEventListener(AUTH_CHANGED_EVENT, sync);
     return () => window.removeEventListener(AUTH_CHANGED_EVENT, sync);
   }, []);
+  useEffect(() => { if (authState) getProfile().then(setProfile).catch(() => setProfile(null)); else setProfile(null); }, [authState]);
 
-  const total = WORDS.length;
-  const mastery = total ? Math.round((s.learned.length / total) * 100) : 0;
-
-  // 近 7 天活动柱状图
-  const week: { label: string; value: number; isToday: boolean }[] = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 86400000);
-    const key = d.toISOString().slice(0, 10);
-    week.push({
-      label: WEEK_CN[(d.getDay() + 6) % 7],
-      value: s.activity[key] || 0,
-      isToday: i === 0,
-    });
-  }
-  const maxVal = Math.max(...week.map((w) => w.value), 1);
-
-  const unlockedCount = ACHIEVEMENTS.filter((a) => a.test(s)).length;
-  const achievements = ACHIEVEMENTS.slice(0, 4).map((a) => ({ ...a, done: a.test(s) }));
-
-  const menu = [
-    { icon: BookMarked, label: "我的生词本", sub: `${s.stuck.length} 个生词`, color: "#2B5CE6", kind: "stuck" as ProfileSheetKind },
-    { icon: Zap, label: "学习记录", sub: `已记 ${s.learned.length} 词 · 已背 ${s.reviewed.length} 词`, color: "#F5A623", kind: "history" as ProfileSheetKind },
-    { icon: Trophy, label: "我的成就", sub: `${unlockedCount}/${ACHIEVEMENTS.length} 已解锁`, color: "#22c55e", kind: "achieve" as ProfileSheetKind },
-    { icon: Calendar, label: "打卡日历", sub: `连续 ${s.streak} 天打卡`, color: "#a855f7", kind: "checkin" as ProfileSheetKind },
-  ];
-
-  return (
-    <div className="flex flex-col h-full bg-[#f0f4ff]">
-      {/* Header */}
-      <div
-        className="px-4 pt-10 pb-8 relative overflow-hidden"
-        style={{ background: "linear-gradient(160deg, #1a3fbf 0%, #2B5CE6 50%, #4a7cf7 100%)" }}
-      >
-        <div className="absolute -top-8 -right-8 w-36 h-36 rounded-full bg-white/5" />
-        <div className="flex items-start justify-between mb-5">
-          <div className="flex items-center gap-3">
-            <div className="w-16 h-16 rounded-2xl bg-white/20 border-2 border-white/30 flex items-center justify-center text-4xl">
-              😊
-            </div>
-            <div>
-              <p className="text-white font-black text-xl">{authState ? currentUser() : "粤语学习者"}</p>
-              <p className="text-white/70 text-xs mt-0.5">
-                {authState ? "已登录 · 进度云端同步" : "入门级 · 广州方言"}
-              </p>
-              <div className="flex items-center gap-1 mt-1">
-                {[0, 1, 2, 3, 4].map((i) => (
-                  <Star
-                    key={i}
-                    size={12}
-                    fill={i < Math.min(5, Math.round(mastery / 20)) ? "#F5A623" : "none"}
-                    className={i < Math.min(5, Math.round(mastery / 20)) ? "text-[#F5A623]" : "text-white/40"}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {authState ? (
-              <button
-                onClick={() => {
-                  if (confirm("确定退出登录吗？")) logout();
-                }}
-                className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center active:scale-95 transition-transform"
-                title="退出登录"
-              >
-                <LogOut size={18} className="text-white" />
-              </button>
-            ) : (
-              <button
-                onClick={() => setAuthOpen(true)}
-                className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center active:scale-95 transition-transform"
-                title="登录/注册"
-              >
-                <LogIn size={18} className="text-white" />
-              </button>
-            )}
-            <button
-              onClick={() => {
-                if (confirm("确定清空全部学习进度吗？此操作不可撤销。")) resetAll();
-              }}
-              className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center active:scale-95 transition-transform"
-              title="重置进度"
-            >
-              <Settings size={18} className="text-white" />
-            </button>
-          </div>
-        </div>
-
-        {/* Stats row */}
-        <div className="grid grid-cols-4 gap-2">
-          {[
-            { label: "学习词汇", value: String(s.learned.length) },
-            { label: "连续天数", value: String(s.streak) },
-            { label: "已背词", value: String(s.reviewed.length) },
-            { label: "掌握率", value: `${mastery}%` },
-          ].map((stat) => (
-            <div key={stat.label} className="bg-white/15 rounded-xl py-2 px-1 text-center">
-              <p className="text-white font-black text-base">{stat.value}</p>
-              <p className="text-white/60 text-[10px] mt-0.5">{stat.label}</p>
-            </div>
-          ))}
-        </div>
+  return <div className="min-h-full bg-[#f7f8fc] px-5 pt-12 pb-8 text-[#192b59]">
+    <p className="text-[#617bd1] text-sm font-semibold">账号与偏好</p>
+    <h1 className="text-[30px] font-black mt-1">我的</h1>
+    <div className="mt-7 bg-white rounded-[24px] p-5 shadow-[0_12px_32px_rgba(31,57,120,.07)]">
+      <div className="flex items-center gap-3">
+        <div className="w-14 h-14 rounded-2xl bg-[#edf2ff] flex items-center justify-center text-3xl">{profile?.avatar || "😊"}</div>
+        <div className="flex-1"><p className="font-bold text-lg">{profile?.nickname || (authState ? currentUser() : "粤语学习者")}</p><p className="text-xs text-[#8b96ac] mt-1">{authState ? "已登录 · 进度云端同步" : "登录后同步学习进度"}</p></div>
+        {authState ? <><button title="编辑资料" onClick={() => setEditOpen(true)} className="w-9 h-9 rounded-xl bg-[#edf2ff] flex items-center justify-center"><Pencil size={16} className="text-[#335eea]" /></button><button title="退出登录" onClick={() => logout()} className="w-9 h-9 rounded-xl bg-[#fff0f1] flex items-center justify-center"><LogOut size={16} className="text-[#d45862]" /></button></> : <button onClick={() => setAuthOpen(true)} className="rounded-xl bg-[#335eea] text-white px-4 py-2 text-sm font-bold"><LogIn size={15} className="inline mr-1" />登录</button>}
       </div>
-
-      <div className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-3">
-        {/* Weekly chart */}
-        <div className="bg-white rounded-2xl p-4 shadow-sm shadow-blue-50">
-          <div className="flex items-center justify-between mb-3">
-            <span className="font-bold text-[#1a1a2e]">本周学习</span>
-            <div className="flex items-center gap-1 text-[#F5A623] text-xs font-bold">
-              <TrendingUp size={13} />
-              <span>{week.reduce((a, b) => a + b.value, 0)} 次学习</span>
-            </div>
-          </div>
-          <div className="flex items-end gap-2 h-20">
-            {week.map((w, i) => (
-              <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                <div
-                  className="w-full rounded-t-md relative"
-                  style={{
-                    height: `${Math.max(4, (w.value / maxVal) * 60)}px`,
-                    background: w.value > 0
-                      ? w.isToday
-                        ? "linear-gradient(180deg, #F5A623, #e8950f)"
-                        : "linear-gradient(180deg, #2B5CE6, #4a7cf7)"
-                      : "#e5e7eb",
-                  }}
-                />
-                <span className={`text-[10px] ${w.isToday ? "text-[#F5A623] font-bold" : "text-gray-400"}`}>
-                  {w.label}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Daily goal */}
-        <div className="bg-white rounded-2xl p-4 shadow-sm shadow-blue-50">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Target size={18} className="text-[#2B5CE6]" />
-              <span className="font-bold text-[#1a1a2e]">每日目标</span>
-            </div>
-            <span className="text-[#2B5CE6] font-black text-lg">{s.dailyGoal} 词</span>
-          </div>
-          <input
-            type="range"
-            min={5}
-            max={50}
-            step={5}
-            value={s.dailyGoal}
-            onChange={(e) => setDailyGoal(Number(e.target.value))}
-            className="w-full accent-[#2B5CE6]"
-          />
-          <div className="flex justify-between text-[10px] text-gray-400 mt-1">
-            <span>5词/天</span>
-            <span>25词/天</span>
-            <span>50词/天</span>
-          </div>
-        </div>
-
-        {/* Achievements */}
-        <div className="bg-white rounded-2xl p-4 shadow-sm shadow-blue-50">
-          <div className="flex items-center justify-between mb-3">
-            <span className="font-bold text-[#1a1a2e]">成就徽章</span>
-            <button
-              onClick={() => setSheet("achieve")}
-              className="text-[#2B5CE6] text-xs flex items-center gap-0.5"
-            >
-              全部 <ChevronRight size={12} />
-            </button>
-          </div>
-          <div className="grid grid-cols-4 gap-3">
-            {achievements.map((a) => (
-              <div key={a.label} className="flex flex-col items-center gap-1">
-                <div
-                  className={`w-12 h-12 rounded-2xl flex items-center justify-center text-2xl ${
-                    a.done ? "bg-gradient-to-br from-[#EEF3FF] to-[#dce8ff] shadow-md" : "bg-gray-100 grayscale opacity-40"
-                  }`}
-                >
-                  {a.icon}
-                </div>
-                <span className="text-[10px] text-gray-500 text-center leading-tight">{a.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Menu items */}
-        <div className="bg-white rounded-2xl shadow-sm shadow-blue-50 overflow-hidden">
-          {menu.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.label}
-                onClick={() => setSheet(item.kind)}
-                className="w-full flex items-center gap-3 px-4 py-3.5 border-b border-gray-50 last:border-0 active:bg-gray-50 transition-colors"
-              >
-                <div
-                  className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
-                  style={{ backgroundColor: item.color + "22" }}
-                >
-                  <Icon size={18} style={{ color: item.color }} />
-                </div>
-                <div className="flex-1 text-left">
-                  <p className="font-medium text-sm text-[#1a1a2e]">{item.label}</p>
-                  <p className="text-xs text-gray-400">{item.sub}</p>
-                </div>
-                <ChevronRight size={16} className="text-gray-300" />
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* 抽屉弹层 */}
-      <ProfileSheet kind={sheet} onClose={() => setSheet(null)} />
-      {authOpen && <AuthSheet onClose={() => setAuthOpen(false)} />}
     </div>
-  );
+
+    <div className="mt-4 bg-white rounded-[24px] p-5 shadow-[0_12px_32px_rgba(31,57,120,.07)]">
+      <div className="flex items-center gap-2"><Settings size={18} className="text-[#335eea]" /><span className="font-bold">基础设置</span></div>
+      <div className="mt-5"><div className="flex items-center justify-between"><span className="text-sm">每日学习目标</span><strong className="text-[#335eea]">{s.dailyGoal} 词</strong></div><input aria-label="每日学习目标" type="range" min={5} max={50} step={5} value={s.dailyGoal} onChange={(e) => setDailyGoal(Number(e.target.value))} className="w-full mt-3 accent-[#335eea]" /><div className="flex justify-between text-[10px] text-[#9aa4b8]"><span>5</span><span>25</span><span>50</span></div></div>
+      <button onClick={() => { if (confirm("确定清空全部学习进度吗？")) resetAll(); }} className="mt-6 w-full flex items-center justify-center gap-2 rounded-xl border border-[#f1d7d9] text-[#d45862] py-3 text-sm font-semibold"><RotateCcw size={15} />重置学习进度</button>
+    </div>
+    <div className="mt-4 rounded-2xl bg-white/70 border border-[#e7ebf4] p-4 text-center text-xs text-[#8b96ac]"><UserRound size={15} className="inline mr-1" />粤语开口练 · AI 语音 / 场景对话 / 电影模仿</div>
+    {authOpen && <AuthSheet onClose={() => setAuthOpen(false)} />}
+    {editOpen && profile && <EditProfileSheet profile={profile} onClose={() => setEditOpen(false)} onSaved={setProfile} />}
+  </div>;
+}
+
+function EditProfileSheet({ profile, onClose, onSaved }: { profile: Profile; onClose: () => void; onSaved: (p: Profile) => void }) {
+  const [nickname, setNickname] = useState(profile.nickname || "");
+  const [avatar, setAvatar] = useState(profile.avatar || PRESET_AVATARS[0]);
+  const [saving, setSaving] = useState(false);
+  async function save() { setSaving(true); try { onSaved(await updateProfile({ nickname: nickname.trim(), avatar })); onClose(); } finally { setSaving(false); } }
+  return <Sheet title="编辑资料" onClose={onClose}><div className="flex flex-col gap-4"><div className="grid grid-cols-4 gap-2">{PRESET_AVATARS.map((a) => <button key={a} onClick={() => setAvatar(a)} className={`aspect-square rounded-xl text-3xl ${avatar === a ? "bg-[#edf2ff] ring-2 ring-[#335eea]" : "bg-gray-50"}`}>{a}</button>)}</div><input value={nickname} onChange={(e) => setNickname(e.target.value)} maxLength={16} placeholder="输入昵称" className="w-full px-4 py-3 rounded-xl bg-[#edf2ff] text-sm outline-none" /><button onClick={save} disabled={saving} className="w-full py-3 rounded-xl bg-[#335eea] text-white font-bold">{saving ? "保存中..." : "保存"}</button></div></Sheet>;
 }

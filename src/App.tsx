@@ -1,79 +1,37 @@
 import { useState } from "react";
+import { Mic, MessagesSquare, Clapperboard, UserRound } from "lucide-react";
 import HomeScreen from "./screens/HomeScreen";
 import SceneDialogueScreen from "./screens/SceneDialogueScreen";
-import TogetherScreen from "./screens/TogetherScreen";
-import ShopScreen from "./screens/ShopScreen";
+import MovieImitationScreen from "./screens/MovieImitationScreen";
 import ProfileScreen from "./screens/ProfileScreen";
-import {
-  BookOpen,
-  MessagesSquare,
-  Users,
-  ShoppingBag,
-  User,
-} from "lucide-react";
 
 const tabs = [
-  { id: "home", label: "首页", icon: BookOpen },
-  { id: "study", label: "场景对话", icon: MessagesSquare },
-  { id: "together", label: "一起学", icon: Users },
-  { id: "shop", label: "商城", icon: ShoppingBag },
-  { id: "profile", label: "我", icon: User },
-];
+  { id: "voice", label: "AI语音", icon: Mic },
+  { id: "scene", label: "场景对话", icon: MessagesSquare },
+  { id: "movie", label: "电影模仿", icon: Clapperboard },
+  { id: "profile", label: "我的", icon: UserRound },
+] as const;
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState("home");
-
-  const renderScreen = () => {
-    switch (activeTab) {
-      case "home": return <HomeScreen />;
-      case "study": return <SceneDialogueScreen />;
-      case "together": return <TogetherScreen />;
-      case "shop": return <ShopScreen />;
-      case "profile": return <ProfileScreen />;
-      default: return <HomeScreen />;
-    }
-  };
-
+  const [activeTab, setActiveTab] = useState<(typeof tabs)[number]["id"]>("voice");
   return (
-    <div className="flex flex-col h-full bg-[#f0f4ff] max-w-[430px] mx-auto relative overflow-hidden">
-      {/* Main content */}
-      <div className="flex-1 overflow-y-auto">
-        {renderScreen()}
+    <div className="flex flex-col h-full bg-[#f7f8fc] max-w-[430px] mx-auto relative overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {activeTab === "voice" && <HomeScreen />}
+        {activeTab === "scene" && <SceneDialogueScreen />}
+        {activeTab === "movie" && <MovieImitationScreen />}
+        {activeTab === "profile" && <ProfileScreen />}
       </div>
-
-      {/* Bottom tab bar */}
-      <div className="flex-shrink-0 bg-white border-t border-gray-100 flex items-center shadow-[0_-2px_12px_rgba(0,0,0,0.06)]">
+      <nav aria-label="主要功能" className="flex-shrink-0 bg-white border-t border-[#edf0f7] flex items-center pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_24px_rgba(37,55,100,0.04)]">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const active = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className="flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-all"
-            >
-              <div
-                className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all ${
-                  active ? "bg-[#2B5CE6]" : ""
-                }`}
-              >
-                <Icon
-                  size={active ? 18 : 22}
-                  className={active ? "text-white" : "text-gray-400"}
-                  strokeWidth={active ? 2.5 : 1.8}
-                />
-              </div>
-              <span
-                className={`text-[11px] font-medium transition-colors ${
-                  active ? "text-[#2B5CE6]" : "text-gray-400"
-                }`}
-              >
-                {tab.label}
-              </span>
-            </button>
-          );
+          return <button key={tab.id} onClick={() => setActiveTab(tab.id)} aria-current={active ? "page" : undefined} className={`flex-1 flex flex-col items-center justify-center py-3 gap-1 transition-colors ${active ? "text-[#335eea]" : "text-[#98a3b9]"}`}>
+            <Icon size={22} strokeWidth={active ? 2.5 : 1.8} />
+            <span className="text-[11px] font-semibold">{tab.label}</span>
+          </button>;
         })}
-      </div>
+      </nav>
     </div>
   );
 }
