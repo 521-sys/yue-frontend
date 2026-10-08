@@ -21,6 +21,7 @@ import { WORDS, CATS, Word, shortMan, shuffle, catOf } from "../data/words";
 import { translate, reverseLookup, hasKnown } from "../data/dictionary";
 import { speak, speakAiReply, stopSpeak } from "../lib/speech";
 import { aiChat, isLoggedin, AUTH_CHANGED_EVENT } from "../lib/api";
+import { useCloudVoice } from "../lib/useCloudVoice";
 import { AuthSheet } from "./AuthSheet";
 
 /* ============================ AI语音（粤语 AI 助手） ============================ */
@@ -108,20 +109,15 @@ function parseReply(text: string): ChatMsg {
   return { role: "ai", yue: text.trim() };
 }
 
-const SR: any =
-  typeof window !== "undefined"
-    ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    : null;
-
 function AiChatSheet({ onClose }: { onClose: () => void }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([WELCOME]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [listening, setListening] = useState(false);
+
   const [showCfg, setShowCfg] = useState(false);
   const [cfg, setCfg] = useState<AiCfg>(loadCfg);
   const listRef = useRef<HTMLDivElement>(null);
-  const recogRef = useRef<any>(null);
+
   const hasKey = cfg.apiKey.trim().length > 0;
   const [authed, setAuthed] = useState(isLoggedin());
   const [showAuth, setShowAuth] = useState(false);
@@ -140,6 +136,7 @@ function AiChatSheet({ onClose }: { onClose: () => void }) {
   }, [msgs, sending]);
 
   function handleClose() {
+    voice.cancel();
     stopSpeak();
     onClose();
   }
@@ -210,30 +207,12 @@ function AiChatSheet({ onClose }: { onClose: () => void }) {
     }
   }
 
+  const voice = useCloudVoice(text => { void send(text); }, stopSpeak);
+  const listening = voice.phase === "recording";
+  const voiceBusy = voice.phase !== "idle";
   function toggleListen() {
-    if (listening) {
-      recogRef.current?.stop();
-      setListening(false);
-      return;
-    }
-    if (!SR) return;
-    try {
-      const r = new SR();
-      r.lang = "zh-HK";
-      r.interimResults = false;
-      r.maxAlternatives = 1;
-      r.onresult = (ev: any) => {
-        const t = ev?.results?.[0]?.[0]?.transcript;
-        if (t) send(t);
-      };
-      r.onend = () => setListening(false);
-      r.onerror = () => setListening(false);
-      recogRef.current = r;
-      setListening(true);
-      r.start();
-    } catch {
-      setListening(false);
-    }
+    if (!authed) { setShowAuth(true); return; }
+    void voice.toggle();
   }
 
   return (
@@ -245,6 +224,7 @@ function AiChatSheet({ onClose }: { onClose: () => void }) {
         <>
           <button
             onClick={() => {
+              voice.cancel();
               stopSpeak();
               setMsgs([WELCOME]);
             }}
@@ -349,14 +329,21 @@ function AiChatSheet({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="flex-shrink-0 px-4 pb-6 pt-1">
+        <p role="status" className="text-xs text-gray-500 mb-2">
+          {voice.phase === "starting" ? "正在启动麦克风…再次点击可取消" :
+           listening ? "正在录音，再点麦克风结束并识别（最多 30 秒）" :
+           voice.phase === "recognizing" ? "正在识别粤语…再次点击可取消" : "点击麦克风说话，说完再次点击即可发送"}
+        </p>
+        {voice.error && <p role="alert" className="text-xs text-red-600 mb-2">{voice.error}</p>}
         <div className="flex items-center gap-2">
-          {SR && (
+          {(
             <button
               onClick={toggleListen}
+              disabled={sending}
               className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 active:scale-90 transition-transform ${
                 listening ? "bg-red-500 animate-pulse" : "bg-white shadow-sm"
               }`}
-              title={listening ? "停止录音" : "讲粤语"}
+              title={listening ? "结束录音并识别" : voiceBusy ? "取消识别" : "讲粤语"}
             >
               <Mic size={18} className={listening ? "text-white" : "text-[#2B5CE6]"} />
             </button>
@@ -367,13 +354,13 @@ function AiChatSheet({ onClose }: { onClose: () => void }) {
             onKeyDown={(e) => {
               if (e.key === "Enter") send();
             }}
-            placeholder={listening ? "听到你讲嘢啦…" : "用粤语或普通话打字"}
-            disabled={sending}
+            placeholder={listening ? "录音中，再点麦克风结束" : "用粤语或普通话打字"}
+            disabled={sending || voiceBusy}
             className="flex-1 bg-white rounded-full px-4 py-2.5 text-sm text-[#1a1a2e] outline-none placeholder:text-gray-400 disabled:opacity-60"
           />
           <button
             onClick={() => send()}
-            disabled={sending || !input.trim()}
+            disabled={sending || voiceBusy || !input.trim()}
             className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 active:scale-90 transition-transform disabled:opacity-40"
             style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
             title="发送"

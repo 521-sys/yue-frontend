@@ -1,11 +1,31 @@
-import { useState } from "react";
-import { Volume2, ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Volume2, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 import { DIALOGUES, Dialogue } from "../data/dialogues";
-import { speak } from "../lib/speech";
+import { speak, stopSpeak } from "../lib/speech";
+import { aiChat } from "../lib/api";
+import { dialoguePrompt, parseGeneratedDialogue, readCustomDialogues, saveCustomDialogue } from "../lib/dialogue-data";
 
 export default function SceneDialogueScreen() {
   const [activeId, setActiveId] = useState<string | null>(null);
-  const dialogue: Dialogue | undefined = DIALOGUES.find((d) => d.id === activeId);
+  const [custom, setCustom] = useState<Dialogue[]>([]);
+  const [topic, setTopic] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => () => stopSpeak(), []);
+  const all = [...DIALOGUES, ...custom];
+  const dialogue: Dialogue | undefined = all.find((d) => d.id === activeId);
+
+  async function generate() {
+    if (!topic.trim() || generating) return;
+    setGenerating(true); setError("");
+    try {
+      const result = await aiChat([{ role: "system", content: dialoguePrompt(topic) }]);
+      const raw = result.choices?.[0]?.message?.content || "";
+      const d = parseGeneratedDialogue(raw);
+      saveCustomDialogue(d); setCustom(readCustomDialogues()); setActiveId(d.id); setTopic("");
+    } catch (e) { setError(e instanceof Error ? e.message : "生成失败，请稍后再试"); }
+    finally { setGenerating(false); }
+  }
 
   /* ---------- 对话详情 ---------- */
   if (dialogue) {
@@ -93,10 +113,15 @@ export default function SceneDialogueScreen() {
             {DIALOGUES.reduce((n, d) => n + d.lines.length, 0)} 句真人发音
           </span>
         </div>
+        <div className="mt-4 flex gap-2">
+          <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="例如：在茶餐厅点餐" className="flex-1 rounded-xl px-3 py-2 text-sm outline-none" />
+          <button onClick={generate} disabled={generating || !topic.trim()} className="rounded-xl bg-white px-3 py-2 text-sm font-bold text-[#2B5CE6] disabled:opacity-50"><Sparkles size={15} className="inline mr-1" />{generating ? "生成中" : "AI生成"}</button>
+        </div>
+        {error && <p className="mt-2 text-xs text-red-100">{error}</p>}
       </div>
 
       <div className="flex-1 px-4 py-4 flex flex-col gap-3 overflow-y-auto">
-        {DIALOGUES.map((d) => (
+        {all.map((d) => (
           <button
             key={d.id}
             onClick={() => setActiveId(d.id)}

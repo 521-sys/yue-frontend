@@ -193,3 +193,27 @@ export async function ttsCantonese(text: string): Promise<Blob> {
   }
   return res.blob();
 }
+
+/** Authenticated cloud ASR. No provider credential is sent to the browser. */
+export async function transcribeAudio(audio: Blob, signal: AbortSignal): Promise<string> {
+  const token = getToken();
+  if (!token) throw new Error('请先登录，再使用语音识别');
+  const body = new FormData(); body.append('audio', audio, 'speech.pcm');
+  const ctrl = new AbortController();
+  const cancel = () => ctrl.abort();
+  if (signal.aborted) ctrl.abort();
+  signal.addEventListener('abort', cancel, {once:true});
+  const timer = setTimeout(cancel, 75000);
+  let res: Response;
+  try { res = await fetch(`${BASE}/api/ai/transcribe`, {
+    method: 'POST', headers: {Authorization: `Bearer ${token}`}, body,
+    signal: ctrl.signal,
+  }); } finally { clearTimeout(timer); signal.removeEventListener('abort', cancel); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (res.status === 401) { clearToken(); throw new Error('登录已过期，请重新登录'); }
+    throw new Error(data.error || '语音识别失败，请稍后重试');
+  }
+  if (!data.text?.trim()) throw new Error('没有听清，请再说一次');
+  return data.text.trim();
+}
