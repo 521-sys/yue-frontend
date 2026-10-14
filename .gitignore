@@ -18,3 +18,6 @@ logs/
 # beside it.
 /.plugins/
 /.opencode-skills/
+
+# Local deployment bundles are not source files.
+/release-*.tar.gz

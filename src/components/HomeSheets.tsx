@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   Check,
   RotateCcw,
@@ -14,6 +14,7 @@ import {
   Send,
   Settings,
   Trash2,
+  Keyboard,
 } from "lucide-react";
 import { FullPage, Sheet, SoundButton, StuckList } from "./Sheet";
 import { markLearned, markStuck } from "../lib/store";
@@ -208,11 +209,53 @@ function AiChatSheet({ onClose }: { onClose: () => void }) {
   }
 
   const voice = useCloudVoice(text => { void send(text); }, stopSpeak);
-  const listening = voice.phase === "recording";
+  const recording = voice.phase === "recording";
   const voiceBusy = voice.phase !== "idle";
-  function toggleListen() {
+
+  // 微信式：键盘输入 / 按住说话 两种模式切换
+  const [voiceMode, setVoiceMode] = useState(false);
+  const [willCancel, setWillCancel] = useState(false);
+  const pressing = useRef(false);
+  const pressStartY = useRef(0);
+  const willCancelRef = useRef(false);
+
+  function switchInputMode() {
+    if (voiceBusy) voice.cancel();
+    pressing.current = false;
+    willCancelRef.current = false;
+    setWillCancel(false);
+    setVoiceMode(v => !v);
+  }
+  function handleHoldDown(e: ReactPointerEvent<HTMLButtonElement>) {
+    if (sending || voice.phase === "recognizing") return;
     if (!authed) { setShowAuth(true); return; }
-    void voice.toggle();
+    e.preventDefault();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* 浏览器不支持 pointer capture 时忽略 */ }
+    pressing.current = true;
+    pressStartY.current = e.clientY;
+    willCancelRef.current = false;
+    setWillCancel(false);
+    void voice.start();
+  }
+  function handleHoldMove(e: ReactPointerEvent<HTMLButtonElement>) {
+    if (!pressing.current) return;
+    willCancelRef.current = pressStartY.current - e.clientY > 60;
+    setWillCancel(willCancelRef.current);
+  }
+  function handleHoldUp() {
+    if (!pressing.current) return;
+    pressing.current = false;
+    const cancelIt = willCancelRef.current;
+    willCancelRef.current = false;
+    setWillCancel(false);
+    if (cancelIt) voice.cancel();
+    else voice.stop();
+  }
+  function handleHoldCancel() {
+    pressing.current = false;
+    willCancelRef.current = false;
+    setWillCancel(false);
+    voice.cancel();
   }
 
   return (
@@ -330,45 +373,89 @@ function AiChatSheet({ onClose }: { onClose: () => void }) {
 
       <div className="flex-shrink-0 px-4 pb-6 pt-1">
         <p role="status" className="text-xs text-gray-500 mb-2">
-          {voice.phase === "starting" ? "正在启动麦克风…再次点击可取消" :
-           listening ? "正在录音，再点麦克风结束并识别（最多 30 秒）" :
-           voice.phase === "recognizing" ? "正在识别粤语…再次点击可取消" : "点击麦克风说话，说完再次点击即可发送"}
+          {voice.phase === "starting" ? "正在启动麦克风…"
+            : recording ? (willCancel ? "松开手指，取消发送" : "松开 发送 · 向上移动 取消（最多 30 秒）")
+            : voice.phase === "recognizing" ? "正在识别粤语…"
+            : voiceMode ? "按住「按住 说话」开始录音，松开自动发送"
+            : "点左侧语音图标，切换成按住说话"}
         </p>
         {voice.error && <p role="alert" className="text-xs text-red-600 mb-2">{voice.error}</p>}
-        <div className="flex items-center gap-2">
-          {(
+
+        {voiceMode ? (
+          <div className="flex items-center gap-2">
             <button
-              onClick={toggleListen}
+              onClick={switchInputMode}
               disabled={sending}
-              className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 active:scale-90 transition-transform ${
-                listening ? "bg-red-500 animate-pulse" : "bg-white shadow-sm"
-              }`}
-              title={listening ? "结束录音并识别" : voiceBusy ? "取消识别" : "讲粤语"}
+              className="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center flex-shrink-0 active:scale-90 transition-transform disabled:opacity-40"
+              title="切换为键盘输入"
             >
-              <Mic size={18} className={listening ? "text-white" : "text-[#2B5CE6]"} />
+              <Keyboard size={18} className="text-[#2B5CE6]" />
             </button>
-          )}
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") send();
-            }}
-            placeholder={listening ? "录音中，再点麦克风结束" : "用粤语或普通话打字"}
-            disabled={sending || voiceBusy}
-            className="flex-1 bg-white rounded-full px-4 py-2.5 text-sm text-[#1a1a2e] outline-none placeholder:text-gray-400 disabled:opacity-60"
-          />
-          <button
-            onClick={() => send()}
-            disabled={sending || voiceBusy || !input.trim()}
-            className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 active:scale-90 transition-transform disabled:opacity-40"
-            style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
-            title="发送"
-          >
-            <Send size={16} className="text-white" />
-          </button>
-        </div>
+            <button
+              onPointerDown={handleHoldDown}
+              onPointerMove={handleHoldMove}
+              onPointerUp={handleHoldUp}
+              onPointerCancel={handleHoldCancel}
+              onContextMenu={(e) => e.preventDefault()}
+              disabled={sending || voice.phase === "recognizing"}
+              className={`flex-1 rounded-full py-2.5 text-sm font-bold border transition-colors touch-none select-none disabled:opacity-60 ${
+                recording
+                  ? willCancel
+                    ? "bg-red-50 border-red-300 text-red-600"
+                    : "bg-[#EEF3FF] border-[#c9d8ff] text-[#2B5CE6]"
+                  : "bg-white border-gray-200 text-[#1a1a2e]"
+              }`}
+            >
+              {recording ? (willCancel ? "松开 取消" : "松开 发送") : "按住 说话"}
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={switchInputMode}
+              disabled={sending}
+              className="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center flex-shrink-0 active:scale-90 transition-transform disabled:opacity-40"
+              title="切换为语音输入"
+            >
+              <Mic size={18} className="text-[#2B5CE6]" />
+            </button>
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") send();
+              }}
+              placeholder="用粤语或普通话打字"
+              disabled={sending}
+              className="flex-1 bg-white rounded-full px-4 py-2.5 text-sm text-[#1a1a2e] outline-none placeholder:text-gray-400 disabled:opacity-60"
+            />
+            <button
+              onClick={() => send()}
+              disabled={sending || !input.trim()}
+              className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 active:scale-90 transition-transform disabled:opacity-40"
+              style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
+              title="发送"
+            >
+              <Send size={16} className="text-white" />
+            </button>
+          </div>
+        )}
       </div>
+
+      {(voice.phase === "starting" || recording) && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center pointer-events-none">
+          <div className="bg-black/70 rounded-2xl px-8 py-6 flex flex-col items-center gap-3">
+            <div className={`w-14 h-14 rounded-full flex items-center justify-center ${willCancel ? "bg-red-500" : "bg-white/15"}`}>
+              <Mic size={30} className="text-white" />
+            </div>
+            <p className="text-white text-sm font-medium">
+              {voice.phase === "starting"
+                ? "正在开启麦克风…"
+                : willCancel ? "松开手指，取消发送" : "松开发送 · 上移取消"}
+            </p>
+          </div>
+        </div>
+      )}
 
       {showAuth && <AuthSheet onClose={() => setShowAuth(false)} />}
     </FullPage>

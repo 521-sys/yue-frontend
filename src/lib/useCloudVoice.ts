@@ -56,9 +56,8 @@ export function useCloudVoice(onText: (text: string) => void, onStart: () => voi
       if (id === generation.current) { abort.current = null; update('idle'); }
     }
   }
-  async function toggle() {
-    if (state.current === 'recording') { await finish(); return; }
-    if (state.current !== 'idle') { cancel(); return; }
+  async function start() {
+    if (state.current !== 'idle') return;
     setError('');
     if (!navigator.mediaDevices?.getUserMedia) { setError('当前浏览器不能录音，请使用 HTTPS 并允许麦克风权限'); return; }
     const id = ++generation.current; update('starting'); onStart();
@@ -95,5 +94,10 @@ export function useCloudVoice(onText: (text: string) => void, onStart: () => voi
       }
     }
   }
-  return { phase, error, toggle, cancel };
+  /** 松开手指：录音中则结束并识别；麦克风仍在启动则视为取消并提示太短 */
+  function stop() {
+    if (state.current === 'recording') { void finish(); return; }
+    if (state.current === 'starting') { cancel(); setError('说话时间太短，请长按按钮说话'); }
+  }
+  return { phase, error, start, stop, cancel };
 }

@@ -20,7 +20,7 @@ describe('cloud microphone lifecycle', () => {
     const stop = vi.fn(); const onText = vi.fn();
     const {result} = renderHook(() => useCloudVoice(onText, vi.fn()));
     let pending!: Promise<void>;
-    await act(async () => { pending = result.current.toggle(); });
+    await act(async () => { pending = result.current.start(); });
     act(() => result.current.cancel());
     await act(async () => { grant({getTracks:() => [{stop}]} as unknown as MediaStream); await pending; });
     expect(stop).toHaveBeenCalledOnce(); expect(close).toHaveBeenCalled();
@@ -30,14 +30,14 @@ describe('cloud microphone lifecycle', () => {
     vi.stubGlobal('AudioContext', FakeContext);
     vi.stubGlobal('navigator', {mediaDevices:{getUserMedia:vi.fn().mockRejectedValue(new DOMException('Denied','NotAllowedError'))}});
     const {result} = renderHook(() => useCloudVoice(vi.fn(), vi.fn()));
-    await act(async () => { await result.current.toggle(); });
+    await act(async () => { await result.current.start(); });
     expect(result.current.error).toContain('允许麦克风'); expect(result.current.phase).toBe('idle'); expect(close).toHaveBeenCalled();
   });
   it('stops microphone tracks when the page unmounts', async () => {
     vi.stubGlobal('AudioContext', FakeContext); const stop = vi.fn();
     vi.stubGlobal('navigator', {mediaDevices:{getUserMedia:vi.fn().mockResolvedValue({getTracks:() => [{stop}]})}});
     const {result,unmount} = renderHook(() => useCloudVoice(vi.fn(), vi.fn()));
-    await act(async () => { await result.current.toggle(); });
+    await act(async () => { await result.current.start(); });
     expect(result.current.phase).toBe('recording'); unmount(); expect(stop).toHaveBeenCalledOnce(); expect(close).toHaveBeenCalled();
   });
 });
