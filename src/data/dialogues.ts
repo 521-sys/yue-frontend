@@ -1,5 +1,7 @@
 // 场景对话数据：粤语原句与 audio-manifest 的离线音频 key 保持一致（逐句可发音）
 export interface DialogueLine {
+  jyutping?: string;
+  audioUrl?: string;
   speaker: "A" | "B";
   yue: string; // 粤语原句
   man: string; // 普通话意思

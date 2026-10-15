@@ -8,6 +8,7 @@ import { ttsCantonese, getToken } from "./api";
 
 let curAudio: HTMLAudioElement | null = null;
 let hkVoice: SpeechSynthesisVoice | null = null;
+export function playSceneAudio(url: string) { stopSpeak(); playFile(url, 1); }
 
 function stopAudio() {
   if (curAudio) {

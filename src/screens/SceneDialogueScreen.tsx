@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Volume2, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
-import { DIALOGUES, Dialogue } from "../data/dialogues";
-import { speak, stopSpeak } from "../lib/speech";
+import { Dialogue } from "../data/dialogues";
+import { speak, stopSpeak, playSceneAudio } from "../lib/speech";
+import { listPublishedScenes, getPublishedScene } from "../lib/scene-api";
 import { aiChat } from "../lib/api";
 import { dialoguePrompt, parseGeneratedDialogue, readCustomDialogues, saveCustomDialogue } from "../lib/dialogue-data";
 
@@ -11,9 +12,26 @@ export default function SceneDialogueScreen() {
   const [topic, setTopic] = useState("");
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
-  useEffect(() => () => stopSpeak(), []);
-  const all = [...DIALOGUES, ...custom];
-  const dialogue: Dialogue | undefined = all.find((d) => d.id === activeId);
+  const [official, setOfficial] = useState<Dialogue[]>([]);
+  const [selected, setSelected] = useState<Dialogue>();
+  const [loading, setLoading] = useState(true);
+  const sequence = useRef(0);
+  async function refresh() {
+    const ticket=++sequence.current; setLoading(true); setError("");
+    try { const items=await listPublishedScenes();if(ticket===sequence.current)setOfficial(items); }
+    catch(e){if(ticket===sequence.current){setOfficial([]);setError(e instanceof Error?e.message:"场景读取失败");}}
+    finally{if(ticket===sequence.current)setLoading(false);}
+  }
+  useEffect(() => {setCustom(readCustomDialogues());void refresh();return () => {sequence.current++;stopSpeak();};}, []);
+  const all = [...official, ...custom.map(d=>({...d,id:'local:'+d.id}))];
+  const dialogue: Dialogue | undefined = activeId?.startsWith('official:')?selected:all.find((d) => d.id === activeId);
+  async function open(d:Dialogue){
+    stopSpeak();setError('');if(!d.id.startsWith('official:')){setActiveId(d.id);return;}
+    const ticket=++sequence.current;setLoading(true);setSelected(undefined);
+    try{const fresh=await getPublishedScene(Number(d.id.slice(9)));if(ticket===sequence.current){setSelected(fresh);setActiveId(d.id);}}
+    catch(e){if(ticket===sequence.current){setOfficial(items=>items.filter(s=>s.id!==d.id));setActiveId(null);setError(e instanceof Error?e.message:'场景读取失败');}}
+    finally{if(ticket===sequence.current)setLoading(false);}
+  }
 
   async function generate() {
     if (!topic.trim() || generating) return;
@@ -22,7 +40,7 @@ export default function SceneDialogueScreen() {
       const result = await aiChat([{ role: "system", content: dialoguePrompt(topic) }]);
       const raw = result.choices?.[0]?.message?.content || "";
       const d = parseGeneratedDialogue(raw);
-      saveCustomDialogue(d); setCustom(readCustomDialogues()); setActiveId(d.id); setTopic("");
+      saveCustomDialogue(d); setCustom(readCustomDialogues()); setActiveId('local:'+d.id); setTopic("");
     } catch (e) { setError(e instanceof Error ? e.message : "生成失败，请稍后再试"); }
     finally { setGenerating(false); }
   }
@@ -37,7 +55,7 @@ export default function SceneDialogueScreen() {
         >
           <div className="flex items-center gap-2 mb-3">
             <button
-              onClick={() => setActiveId(null)}
+              onClick={() => {stopSpeak();setSelected(undefined);setActiveId(null);void refresh();}}
               className="w-8 h-8 rounded-full bg-white/15 flex items-center justify-center active:scale-90 transition-transform"
             >
               <ChevronLeft size={18} className="text-white" />
@@ -75,12 +93,13 @@ export default function SceneDialogueScreen() {
                     >
                       {line.yue}
                     </p>
+                    {line.jyutping&&<p className={`text-xs mt-1 ${isA?'text-gray-500':'text-white/80'}`}>{line.jyutping}</p>}
                     <p className={`text-xs mt-1 ${isA ? "text-gray-400" : "text-white/70"}`}>
                       {line.man}
                     </p>
                   </div>
                   <button
-                    onClick={() => speak(line.yue)}
+                    onClick={() => line.audioUrl ? playSceneAudio(line.audioUrl) : speak(line.yue)}
                     className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 active:scale-90 transition-transform ${
                       isA ? "bg-[#EEF3FF]" : "bg-white/80"
                     }`}
@@ -107,24 +126,27 @@ export default function SceneDialogueScreen() {
         <p className="text-white font-bold text-lg mt-0.5">场景对话</p>
         <div className="flex gap-2 mt-3">
           <span className="bg-white/15 text-white text-[11px] px-2.5 py-1 rounded-full">
-            {DIALOGUES.length} 个场景
+            {all.length} 个场景
           </span>
           <span className="bg-white/15 text-white text-[11px] px-2.5 py-1 rounded-full">
-            {DIALOGUES.reduce((n, d) => n + d.lines.length, 0)} 句真人发音
+            {all.reduce((n, d) => n + d.lines.length, 0)} 句对话练习
           </span>
         </div>
         <div className="mt-4 flex gap-2">
           <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="例如：在茶餐厅点餐" className="flex-1 rounded-xl px-3 py-2 text-sm outline-none" />
           <button onClick={generate} disabled={generating || !topic.trim()} className="rounded-xl bg-white px-3 py-2 text-sm font-bold text-[#2B5CE6] disabled:opacity-50"><Sparkles size={15} className="inline mr-1" />{generating ? "生成中" : "AI生成"}</button>
         </div>
-        {error && <p className="mt-2 text-xs text-red-100">{error}</p>}
+        {error && <div className="mt-2 text-xs text-red-100"><p role="alert">{error}</p><button onClick={()=>void refresh()}>重试</button></div>}
+        {loading&&<p className="mt-2 text-xs text-white">正在加载场景…</p>}
       </div>
 
       <div className="flex-1 px-4 py-4 flex flex-col gap-3 overflow-y-auto">
+        {!loading&&!error&&!official.length&&<p className="text-sm text-gray-500">暂无已发布的场景</p>}
         {all.map((d) => (
           <button
             key={d.id}
-            onClick={() => setActiveId(d.id)}
+            disabled={loading}
+            onClick={() => void open(d)}
             className="bg-white rounded-2xl p-4 shadow-sm shadow-blue-50 flex items-center gap-3 text-left transition-all active:scale-[0.98]"
           >
             <div className="w-12 h-12 rounded-xl bg-[#EEF3FF] flex items-center justify-center flex-shrink-0 text-2xl">
