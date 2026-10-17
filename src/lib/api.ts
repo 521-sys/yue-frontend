@@ -55,6 +55,17 @@ export interface Profile {
   avatar?: string | null;
 }
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status?: number,
+    public readonly retryAfterSeconds?: number
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 async function authFetch(path: string, init?: RequestInit): Promise<Response> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -70,8 +81,9 @@ async function authFetch(path: string, init?: RequestInit): Promise<Response> {
     }
     const err = (await res.json().catch(() => ({ error: res.statusText }))) as {
       error?: string;
+      retryAfterSeconds?: number;
     };
-    throw new Error(err.error || "请求失败");
+    throw new ApiError(err.error || "请求失败", res.status, err.retryAfterSeconds);
   }
   return res;
 }
@@ -120,6 +132,24 @@ export async function phoneLogin(
   const res = await authFetch("/api/auth/phone/login", {
     method: "POST",
     body: JSON.stringify({ phone, password }),
+  });
+  return res.json();
+}
+
+export async function sendSmsLoginCode(
+  phone: string
+): Promise<{ accepted: boolean; retryAfterSeconds: number }> {
+  const res = await authFetch("/api/auth/sms/code", {
+    method: "POST",
+    body: JSON.stringify({ phone }),
+  });
+  return res.json();
+}
+
+export async function smsLogin(phone: string, code: string): Promise<AuthResponse> {
+  const res = await authFetch("/api/auth/sms/login", {
+    method: "POST",
+    body: JSON.stringify({ phone, code }),
   });
   return res.json();
 }

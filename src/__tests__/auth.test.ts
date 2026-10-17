@@ -84,6 +84,34 @@ describe("登录与云端同步（store + api 联动）", () => {
     expect(store.getState().learned).toContain("w3");
   });
 
+  it("smsLoginAndSync：短信登录使用专用接口并复用登录后同步", async () => {
+    fetchMock.mockImplementation(async (url: string | URL, init?: RequestInit) => {
+      if (String(url).endsWith("/api/auth/sms/login")) {
+        expect(init?.method).toBe("POST");
+        expect(init?.body).toBe(JSON.stringify({ phone: "13812345678", code: "123456" }));
+        return jsonOk({ token: "sms-token", username: "user5678", userId: 8 });
+      }
+      return jsonOk({ hasCloudData: true, state: { learned: ["sms-word"] } });
+    });
+    const r = await store.smsLoginAndSync("13812345678", "123456");
+    expect(r.username).toBe("user5678");
+    expect(localStorage.getItem("yueToken")).toBe("sms-token");
+    expect(store.getState().learned).toContain("sms-word");
+    expect(fetchMock.mock.calls.filter(([, i]) => i?.method === "PUT")).toHaveLength(0);
+  });
+
+  it("sendSmsLoginCode：保留 429 消息与重试秒数", async () => {
+    const { sendSmsLoginCode, ApiError } = await import("../lib/api");
+    fetchMock.mockResolvedValue({
+      ok: false, status: 429, statusText: "Too Many Requests",
+      json: async () => ({ error: "请求过于频繁，请稍后重试", retryAfterSeconds: 37 }),
+    } as Response);
+    await expect(sendSmsLoginCode("13812345678")).rejects.toMatchObject({
+      constructor: ApiError, message: "请求过于频繁，请稍后重试", status: 429, retryAfterSeconds: 37,
+    });
+    expect(fetchMock.mock.calls[0][1]?.body).toBe(JSON.stringify({ phone: "13812345678" }));
+  });
+
   it("phoneRegisterAndSync：手机号注册成功后上传本地状态作为初始记录", async () => {
     fetchMock.mockImplementation(async (url: string | URL, init?: RequestInit) => {
       if (String(url).endsWith("/api/auth/phone/register")) {
