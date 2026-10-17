@@ -1,0 +1,70 @@
+import { useEffect, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
+import { sendSmsLoginCode } from "../../lib/api";
+import { loginAndSync, phoneLoginAndSync, smsLoginAndSync } from "../../lib/store";
+
+const PHONE_RE = /^1[3-9]\d{9}$/;
+
+export function LoginPanel({ phone, onPhoneChange, onRegister, onAuthenticated }: {
+  phone: string; onPhoneChange: (phone: string) => void; onRegister: () => void; onAuthenticated?: () => void;
+}) {
+  const [tab, setTab] = useState<"password" | "sms">("password");
+  const [identifier, setIdentifier] = useState(phone);
+  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [countdown, setCountdown] = useState(0);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!countdown) return;
+    const timer = window.setInterval(() => setCountdown((n) => Math.max(0, n - 1)), 1000);
+    return () => window.clearInterval(timer);
+  }, [countdown > 0]);
+
+  function switchTab(next: "password" | "sms") {
+    if (next === "sms" && /^\d*$/.test(identifier)) onPhoneChange(identifier.slice(0, 11));
+    if (next === "password" && !identifier) setIdentifier(phone);
+    setTab(next); setError("");
+  }
+
+  async function sendCode() {
+    setError("");
+    if (!PHONE_RE.test(phone)) { setError("请输入正确的11位手机号"); return; }
+    setSending(true);
+    try { const result = await sendSmsLoginCode(phone); setCountdown(result.retryAfterSeconds); }
+    catch (e) { setError(e instanceof Error ? e.message : "验证码发送失败"); }
+    finally { setSending(false); }
+  }
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault(); setError("");
+    if (tab === "password") {
+      const value = identifier.trim();
+      if (value.length < 3) { setError("请输入手机号或用户名"); return; }
+      if (password.length < 6) { setError("密码至少6位"); return; }
+      setLoading(true);
+      try { if (PHONE_RE.test(value)) await phoneLoginAndSync(value, password); else await loginAndSync(value, password); onAuthenticated?.(); }
+      catch (e) { setError(e instanceof Error ? e.message : "登录失败"); }
+      finally { setLoading(false); }
+    } else {
+      if (!PHONE_RE.test(phone)) { setError("请输入正确的11位手机号"); return; }
+      if (!/^\d{6}$/.test(code)) { setError("请输入6位验证码"); return; }
+      setLoading(true);
+      try { await smsLoginAndSync(phone, code); onAuthenticated?.(); }
+      catch (e) { setError(e instanceof Error ? e.message : "登录失败"); }
+      finally { setLoading(false); }
+    }
+  }
+
+  const row = "w-full border-0 border-b border-[#dfe4ef] bg-transparent px-0 py-4 text-[16px] outline-none focus:border-[#335eea]";
+  return <div className="mx-auto w-full max-w-[360px] rounded-[28px] bg-white px-7 py-8 shadow-[0_16px_50px_rgba(31,57,120,.08)]">
+    <div className="mb-7 flex justify-center gap-10" role="tablist"><button type="button" role="tab" aria-selected={tab === "password"} onClick={() => switchTab("password")} className={`pb-2 text-lg ${tab === "password" ? "border-b-[3px] border-[#335eea] font-black text-[#17264d]" : "text-[#8b96ac]"}`}>密码登录</button><button type="button" role="tab" aria-selected={tab === "sms"} onClick={() => switchTab("sms")} className={`pb-2 text-lg ${tab === "sms" ? "border-b-[3px] border-[#335eea] font-black text-[#17264d]" : "text-[#8b96ac]"}`}>短信登录</button></div>
+    <form onSubmit={submit} className="flex flex-col">
+      {tab === "password" ? <><label className="sr-only" htmlFor="login-id">手机号或用户名</label><input id="login-id" aria-label="手机号或用户名" value={identifier} onChange={(e) => { setIdentifier(e.target.value); if (/^\d*$/.test(e.target.value)) onPhoneChange(e.target.value.slice(0, 11)); }} placeholder="手机号或用户名" autoComplete="username" className={row}/><div className="relative"><label className="sr-only" htmlFor="login-password">密码</label><input id="login-password" aria-label="密码" type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="密码" autoComplete="current-password" className={`${row} pr-10`}/><button type="button" aria-label={showPassword ? "隐藏密码" : "显示密码"} onClick={() => setShowPassword(!showPassword)} className="absolute right-0 top-1/2 -translate-y-1/2 text-[#9aa4b8]">{showPassword ? <EyeOff size={19}/> : <Eye size={19}/>}</button></div></> : <><label className="sr-only" htmlFor="sms-phone">手机号</label><input id="sms-phone" aria-label="手机号" inputMode="numeric" value={phone} onChange={(e) => onPhoneChange(e.target.value.replace(/\D/g, "").slice(0, 11))} placeholder="手机号" className={row}/><div className="relative"><label className="sr-only" htmlFor="sms-code">验证码</label><input id="sms-code" aria-label="验证码" inputMode="numeric" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6位验证码" className={`${row} pr-28`}/><button type="button" disabled={sending || countdown > 0} onClick={sendCode} className="absolute right-0 top-1/2 -translate-y-1/2 text-sm font-bold text-[#335eea] disabled:text-[#9aa4b8]">{sending ? "发送中..." : countdown > 0 ? `${countdown}秒后重发` : "获取验证码"}</button></div></>}
+      {error && <p role="alert" className="mt-3 text-sm text-[#d45862]">{error}</p>}<button type="submit" disabled={loading} className="mt-7 w-full rounded-full bg-[#335eea] py-3.5 font-black text-white disabled:opacity-60">{loading ? "登录中..." : "登录"}</button><button type="button" onClick={onRegister} className="mt-6 text-right text-sm text-[#5f6f91]">快速注册</button>
+    </form>
+  </div>;
+}
