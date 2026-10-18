@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import App from "../App";
+import { speakAiReply } from "../lib/speech";
 
 const mockTranscribe = vi.fn(async () => "你好，我想练习粤语");
 
@@ -13,9 +14,11 @@ vi.mock("../lib/api", () => ({
   AUTH_CHANGED_EVENT: "yue-auth-changed",
 }));
 vi.mock("../lib/speech", () => ({
+  clearSpeechCache: vi.fn(),
   speak: vi.fn(),
-  speakAiReply: vi.fn(),
+  speakAiReply: vi.fn(async () => ({ ok: true, source: "server" })),
   stopSpeak: vi.fn(),
+  warmUpAudio: vi.fn(),
 }));
 
 /** 假 AudioContext：ScriptProcessor 在 connect 时同步灌入足够长的有声样本，
@@ -81,6 +84,8 @@ beforeEach(() => {
   localStorage.clear();
   mockTranscribe.mockClear();
   stop.mockClear();
+  vi.mocked(speakAiReply).mockReset();
+  vi.mocked(speakAiReply).mockResolvedValue({ ok: true, source: "server" });
 });
 
 describe("微信式按住说话", () => {
@@ -125,5 +130,40 @@ describe("微信式按住说话", () => {
     fireEvent.click(screen.getByTitle("切换为语音输入"));
     fireEvent.click(screen.getByTitle("切换为键盘输入"));
     expect(screen.getByPlaceholderText("用粤语或普通话打字")).toBeInTheDocument();
+  });
+
+  it("播放被自动播放策略拦截时，显示「点按播放语音」按钮", async () => {
+    vi.mocked(speakAiReply).mockImplementation(async () => ({ ok: false, reason: "autoplay-blocked" }));
+    openAiChat();
+    fireEvent.click(await screen.findByRole("button", { name: "再听一次" }));
+    expect(await screen.findByRole("button", { name: "点按播放语音" })).toBeInTheDocument();
+  });
+
+  it("浏览器无粤语语音时点「再听一次」给出明确提示", async () => {
+    vi.mocked(speakAiReply).mockImplementation(async () => ({ ok: false, reason: "no-cantonese-voice" }));
+    openAiChat();
+    fireEvent.click(await screen.findByRole("button", { name: "再听一次" }));
+    expect(await screen.findByText("当前浏览器没有粤语语音引擎，建议用 Chrome 浏览器打开")).toBeInTheDocument();
+  });
+
+  it("退出 AI 面板后不再执行尚未开始的自动播放", async () => {
+    vi.useFakeTimers();
+    try {
+      openAiChat();
+      fireEvent.change(screen.getByPlaceholderText("用粤语或普通话打字"), {
+        target: { value: "你好" },
+      });
+      fireEvent.click(screen.getByTitle("发送"));
+      await act(async () => {});
+      fireEvent.click(screen.getByRole("button", { name: "✕ 退出" }));
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(250);
+      });
+
+      expect(speakAiReply).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

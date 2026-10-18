@@ -20,7 +20,7 @@ import { FullPage, Sheet, SoundButton, StuckList } from "./Sheet";
 import { markLearned, markStuck } from "../lib/store";
 import { WORDS, CATS, Word, shortMan, shuffle, catOf } from "../data/words";
 import { translate, reverseLookup, hasKnown } from "../data/dictionary";
-import { speak, speakAiReply, stopSpeak } from "../lib/speech";
+import { clearSpeechCache, speak, speakAiReply, stopSpeak, warmUpAudio } from "../lib/speech";
 import { aiChat, isLoggedin, AUTH_CHANGED_EVENT } from "../lib/api";
 import { useCloudVoice } from "../lib/useCloudVoice";
 import { AuthSheet } from "./AuthSheet";
@@ -115,9 +115,15 @@ function AiChatSheet({ onClose }: { onClose: () => void }) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
 
+  // AI 回复播放状态（按消息索引）：loading 语音生成中 / blocked 被自动播放拦截需点按 / error 服务端或浏览器不支持
+  const [speakState, setSpeakState] = useState<
+    Record<number, { state: "loading" | "blocked" | "error"; hint?: string }>
+  >({});
+
   const [showCfg, setShowCfg] = useState(false);
   const [cfg, setCfg] = useState<AiCfg>(loadCfg);
   const listRef = useRef<HTMLDivElement>(null);
+  const mountedRef = useRef(true);
 
   const hasKey = cfg.apiKey.trim().length > 0;
   const [authed, setAuthed] = useState(isLoggedin());
@@ -127,6 +133,11 @@ function AiChatSheet({ onClose }: { onClose: () => void }) {
     const sync = () => setAuthed(isLoggedin());
     window.addEventListener(AUTH_CHANGED_EVENT, sync);
     return () => window.removeEventListener(AUTH_CHANGED_EVENT, sync);
+  }, []);
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+    clearSpeechCache();
   }, []);
 
   useEffect(() => {
@@ -183,15 +194,34 @@ function AiChatSheet({ onClose }: { onClose: () => void }) {
   async function send(raw?: string) {
     const text = (raw ?? input).trim();
     if (!text || sending) return;
+    warmUpAudio();
     setInput("");
     const history: ChatMsg[] = [...msgs, { role: "user", yue: text }];
     setMsgs(history);
     setSending(true);
     try {
       const reply = hasKey || authed ? await callAi(history) : localReply(text);
+      if (!mountedRef.current) return;
+      const replyIdx = history.length;
       setMsgs((prev) => [...prev, reply]);
-      setTimeout(() => speakAiReply(reply.yue), 200);
+      // 自动播放：手机端经过录音识别/AI 长链路后可能脱离用户手势被拦截，失败则提示手动点按
+      setTimeout(() => {
+        if (!mountedRef.current) return;
+        void speakAiReply(reply.yue).then((r) => {
+          if (!mountedRef.current) return;
+          if (!r.ok) {
+            setSpeakState((s) => ({
+              ...s,
+              [replyIdx]: {
+                state: r.reason === "autoplay-blocked" ? "blocked" : "error",
+                hint: speakHint(r.reason),
+              },
+            }));
+          }
+        });
+      }, 200);
     } catch (e) {
+      if (!mountedRef.current) return;
       const detail = e instanceof Error && e.message ? e.message : "";
       setMsgs((prev) => [
         ...prev,
@@ -204,7 +234,47 @@ function AiChatSheet({ onClose }: { onClose: () => void }) {
         },
       ]);
     } finally {
-      setSending(false);
+      if (mountedRef.current) setSending(false);
+    }
+  }
+
+  /** 把播放失败原因翻译成人话，让用户知道下一步（而不是无声且无提示） */
+  function speakHint(reason: string): string {
+    switch (reason) {
+      case "autoplay-blocked":
+        return "点按播放粤语语音";
+      case "server-tts-failed":
+        return "服务端语音暂时不可用，请稍后重试；手机上建议用 Chrome 浏览器打开";
+      case "no-cantonese-voice":
+        return "当前浏览器没有粤语语音引擎，建议用 Chrome 浏览器打开";
+      case "tts-unsupported":
+        return "当前浏览器不支持语音播放，建议用 Chrome 浏览器打开";
+      default:
+        return "语音播放失败，请重试";
+    }
+  }
+
+  /** 手动点按「再听一次 / 点按播放」：首次会请求服务端 TTS 并缓存；被拦截后再点可在手势内立即播放 */
+  async function handleReplay(idx: number, yue: string) {
+    stopSpeak();
+    warmUpAudio();
+    setSpeakState((s) => ({ ...s, [idx]: { state: "loading" } }));
+    const r = await speakAiReply(yue);
+    if (!mountedRef.current) return;
+    if (r.ok) {
+      setSpeakState((s) => {
+        const next = { ...s };
+        delete next[idx];
+        return next;
+      });
+    } else {
+      setSpeakState((s) => ({
+        ...s,
+        [idx]: {
+          state: r.reason === "autoplay-blocked" ? "blocked" : "error",
+          hint: speakHint(r.reason),
+        },
+      }));
     }
   }
 
@@ -235,6 +305,7 @@ function AiChatSheet({ onClose }: { onClose: () => void }) {
     pressStartY.current = e.clientY;
     willCancelRef.current = false;
     setWillCancel(false);
+    warmUpAudio();
     void voice.start();
   }
   function handleHoldMove(e: ReactPointerEvent<HTMLButtonElement>) {
@@ -346,12 +417,40 @@ function AiChatSheet({ onClose }: { onClose: () => void }) {
               >
                 <p className="text-[#1a1a2e] text-sm leading-relaxed whitespace-pre-wrap">{m.yue}</p>
                 {m.man && <p className="text-gray-400 text-xs mt-1.5 leading-relaxed">{m.man}</p>}
-                <button
-                  onClick={() => speakAiReply(m.yue)}
-                  className="mt-2 flex items-center gap-1 text-[#2B5CE6] text-xs bg-[#EEF3FF] px-2.5 py-1 rounded-full active:scale-95 transition-transform"
-                >
-                  <Volume2 size={12} /> 再听一次
-                </button>
+                {(() => {
+                  const ss = speakState[i];
+                  if (ss?.state === "loading") {
+                    return (
+                      <span className="mt-2 inline-flex items-center gap-1 text-gray-400 text-xs bg-[#F2F3F7] px-2.5 py-1 rounded-full">
+                        <Volume2 size={12} /> 语音生成中…
+                      </span>
+                    );
+                  }
+                  if (ss?.state === "blocked") {
+                    return (
+                      <button
+                        onClick={() => handleReplay(i, m.yue)}
+                        className="mt-2 flex items-center gap-1 text-white text-xs font-bold px-3 py-1.5 rounded-full active:scale-95 transition-transform"
+                        style={{ background: "linear-gradient(135deg, #2B5CE6, #4a7cf7)" }}
+                      >
+                        <Play size={12} /> 点按播放语音
+                      </button>
+                    );
+                  }
+                  return (
+                    <>
+                      <button
+                        onClick={() => handleReplay(i, m.yue)}
+                        className="mt-2 flex items-center gap-1 text-[#2B5CE6] text-xs bg-[#EEF3FF] px-2.5 py-1 rounded-full active:scale-95 transition-transform"
+                      >
+                        <Volume2 size={12} /> 再听一次
+                      </button>
+                      {ss?.state === "error" && ss.hint && (
+                        <p className="text-red-500 text-xs mt-1.5 leading-relaxed">{ss.hint}</p>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             ) : (
               <div
