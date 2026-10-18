@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ProfileScreen from "../screens/ProfileScreen";
 import { AuthFlow } from "../components/auth/AuthFlow";
+import { LoginPanel } from "../components/auth/LoginPanel";
 import * as store from "../lib/store";
 import * as api from "../lib/api";
 
@@ -20,8 +22,12 @@ describe("登录界面", () => {
 
   it("未登录的我的页面直接显示认证表单并隐藏设置", () => {
     render(<ProfileScreen />);
-    expect(screen.getByRole("tab", { name: "密码登录" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "短信登录" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "欢迎回来" })).toBeInTheDocument();
+    expect(screen.getByText("登录后继续你的粤语练习")).toBeInTheDocument();
+    expect(screen.getByLabelText("手机号或用户名")).toBeInTheDocument();
+    expect(screen.getByLabelText("密码")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "首次使用？创建账号" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "短信登录" })).not.toBeInTheDocument();
     expect(screen.queryByText("基础设置")).not.toBeInTheDocument();
     expect(screen.queryByText("每日学习目标")).not.toBeInTheDocument();
     expect(screen.queryByText("重置学习进度")).not.toBeInTheDocument();
@@ -41,16 +47,20 @@ describe("登录界面", () => {
 
   it("快速注册进入独立注册页并可返回", async () => {
     render(<AuthFlow />);
-    fireEvent.click(screen.getByRole("button", { name: "快速注册" }));
+    fireEvent.click(screen.getByRole("button", { name: "首次使用？创建账号" }));
     expect(screen.getByRole("heading", { name: "创建账号" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "返回登录" }));
-    expect(screen.getByRole("tab", { name: "密码登录" })).toBeInTheDocument();
+    expect(screen.getByLabelText("手机号或用户名")).toBeInTheDocument();
   });
 
   it("短信登录本地校验、按后端秒数倒计时并提交六位验证码", async () => {
     vi.mocked(api.sendSmsLoginCode).mockResolvedValue({ accepted: true, retryAfterSeconds: 60 });
     vi.mocked(store.smsLoginAndSync).mockResolvedValue({ username: "user5678" });
-    render(<AuthFlow />);
+    function SmsHarness() {
+      const [phone, setPhone] = useState("");
+      return <LoginPanel phone={phone} onPhoneChange={setPhone} onRegister={() => {}} smsEnabled />;
+    }
+    render(<SmsHarness />);
     fireEvent.click(screen.getByRole("tab", { name: "短信登录" }));
     await userEvent.type(screen.getByLabelText("手机号"), "123");
     fireEvent.click(screen.getByRole("button", { name: "获取验证码" }));

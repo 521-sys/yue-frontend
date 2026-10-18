@@ -20,10 +20,16 @@ export default function ProfileScreen() {
   }, []);
   useEffect(() => { if (authState) getProfile().then(setProfile).catch(() => setProfile(null)); else setProfile(null); }, [authState]);
 
-  if (!authState) return <div className="min-h-full bg-[#f7f8fc] px-5 pt-12 pb-8 text-[#192b59]">
-    <p className="text-[#617bd1] text-sm font-semibold">账号与偏好</p>
-    <h1 className="text-[30px] font-black mt-1 mb-7">我的</h1>
+  if (!authState) return <div className="min-h-full bg-[linear-gradient(180deg,#f4f7ff_0%,#f8f9fd_48%,#f7f8fc_100%)] px-5 pb-10 pt-14 text-[#192b59]">
+    <div className="mx-auto mb-8 max-w-[380px] text-center">
+      <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-[22px] bg-[#335eea] text-2xl font-black text-white shadow-[0_12px_30px_rgba(51,94,234,.25)]">粤</div>
+      <h1 className="text-[30px] font-black tracking-tight">欢迎回来</h1>
+      <p className="mt-2 text-sm text-[#74809a]">登录后继续你的粤语练习</p>
+    </div>
     <AuthFlow onAuthenticated={() => setAuthState(true)} />
+    <div className="mx-auto mt-7 flex max-w-[380px] justify-center gap-5 text-xs text-[#8b96ac]">
+      <span>进度自动同步</span><span aria-hidden="true">·</span><span>收藏跨设备保留</span>
+    </div>
   </div>;
 
   return <div className="min-h-full bg-[#f7f8fc] px-5 pt-12 pb-8 text-[#192b59]">
