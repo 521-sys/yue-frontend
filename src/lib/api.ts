@@ -66,7 +66,7 @@ export class ApiError extends Error {
   }
 }
 
-async function authFetch(path: string, init?: RequestInit): Promise<Response> {
+export async function authFetch(path: string, init?: RequestInit): Promise<Response> {
   const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
