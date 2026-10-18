@@ -1,24 +1,36 @@
 import { useEffect, useState } from "react";
-import { LogOut, Pencil, RotateCcw, Settings, UserRound } from "lucide-react";
+import { ChevronRight, Cloud, Heart, LogOut, Pencil } from "lucide-react";
 import { AuthFlow } from "../components/auth/AuthFlow";
+import FavoritesView from "../components/profile/FavoritesView";
 import { Sheet } from "../components/Sheet";
-import { currentUser, isLoggedin, logout, resetAll, setDailyGoal, useLearning } from "../lib/store";
+import { currentUser, isLoggedin, logout } from "../lib/store";
 import { AUTH_CHANGED_EVENT, getProfile, updateProfile, type Profile } from "../lib/api";
+import { useSyncStatus, type SyncStatus } from "../lib/sync-status";
 
 export const PRESET_AVATARS = ["😊", "😎", "🤠", "🦊", "🐼", "🐯", "🦄", "🐨"];
 
-export default function ProfileScreen() {
-  const s = useLearning();
+export default function ProfileScreen({ onOpenScene }: { onOpenScene?: (id: number) => void }) {
   const [editOpen, setEditOpen] = useState(false);
   const [authState, setAuthState] = useState(() => isLoggedin());
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [view, setView] = useState<"account" | "favorites">("account");
+  const syncStatus = useSyncStatus();
 
   useEffect(() => {
     const sync = () => setAuthState(isLoggedin());
     window.addEventListener(AUTH_CHANGED_EVENT, sync);
     return () => window.removeEventListener(AUTH_CHANGED_EVENT, sync);
   }, []);
-  useEffect(() => { if (authState) getProfile().then(setProfile).catch(() => setProfile(null)); else setProfile(null); }, [authState]);
+  useEffect(() => {
+    let active = true;
+    if (authState) {
+      getProfile().then((next) => { if (active) setProfile(next); }).catch(() => { if (active) setProfile(null); });
+    } else {
+      setProfile(null);
+      setView("account");
+    }
+    return () => { active = false; };
+  }, [authState]);
 
   if (!authState) return <div className="min-h-full bg-[linear-gradient(180deg,#f4f7ff_0%,#f8f9fd_48%,#f7f8fc_100%)] px-5 pb-10 pt-14 text-[#192b59]">
     <div className="mx-auto mb-8 max-w-[380px] text-center">
@@ -32,25 +44,46 @@ export default function ProfileScreen() {
     </div>
   </div>;
 
-  return <div className="min-h-full bg-[#f7f8fc] px-5 pt-12 pb-8 text-[#192b59]">
-    <p className="text-[#617bd1] text-sm font-semibold">账号与偏好</p>
-    <h1 className="text-[30px] font-black mt-1">我的</h1>
-    <div className="mt-7 bg-white rounded-[24px] p-5 shadow-[0_12px_32px_rgba(31,57,120,.07)]">
+  if (view === "favorites") return <FavoritesView onBack={() => setView("account")} onOpenScene={(id) => onOpenScene?.(id)} />;
+
+  const username = profile?.username || currentUser() || "粤语学习者";
+  const sync = syncPresentation(syncStatus);
+
+  return <div className="min-h-full bg-[#f7f8fc] px-5 pb-10 pt-12 text-[#192b59]">
+    <div className="mx-auto max-w-[460px]">
+    <p className="text-sm font-semibold text-[#617bd1]">账号中心</p>
+    <h1 className="mt-1 text-[30px] font-black">我的</h1>
+    <div className="mt-7 rounded-[26px] bg-white p-5 shadow-[0_12px_32px_rgba(31,57,120,.07)]">
       <div className="flex items-center gap-3">
-        <div className="w-14 h-14 rounded-2xl bg-[#edf2ff] flex items-center justify-center text-3xl">{profile?.avatar || "😊"}</div>
-        <div className="flex-1"><p className="font-bold text-lg">{profile?.nickname || (authState ? currentUser() : "粤语学习者")}</p><p className="text-xs text-[#8b96ac] mt-1">{authState ? "已登录 · 进度云端同步" : "登录后同步学习进度"}</p></div>
-        <><button title="编辑资料" onClick={() => setEditOpen(true)} className="w-9 h-9 rounded-xl bg-[#edf2ff] flex items-center justify-center"><Pencil size={16} className="text-[#335eea]" /></button><button title="退出登录" onClick={() => logout()} className="w-9 h-9 rounded-xl bg-[#fff0f1] flex items-center justify-center"><LogOut size={16} className="text-[#d45862]" /></button></>
+        <div className="flex h-16 w-16 items-center justify-center rounded-[22px] bg-[#edf2ff] text-3xl">{profile?.avatar || "😊"}</div>
+        <div className="min-w-0 flex-1"><p className="truncate text-lg font-black">{profile?.nickname || username}</p><p className="mt-1 truncate text-xs text-[#8b96ac]">@{username}</p></div>
+        <button type="button" aria-label="编辑资料" disabled={!profile} onClick={() => setEditOpen(true)} className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#edf2ff] text-[#335eea] disabled:opacity-40"><Pencil size={17} /></button>
       </div>
     </div>
 
-    <div className="mt-4 bg-white rounded-[24px] p-5 shadow-[0_12px_32px_rgba(31,57,120,.07)]">
-      <div className="flex items-center gap-2"><Settings size={18} className="text-[#335eea]" /><span className="font-bold">基础设置</span></div>
-      <div className="mt-5"><div className="flex items-center justify-between"><span className="text-sm">每日学习目标</span><strong className="text-[#335eea]">{s.dailyGoal} 词</strong></div><input aria-label="每日学习目标" type="range" min={5} max={50} step={5} value={s.dailyGoal} onChange={(e) => setDailyGoal(Number(e.target.value))} className="w-full mt-3 accent-[#335eea]" /><div className="flex justify-between text-[10px] text-[#9aa4b8]"><span>5</span><span>25</span><span>50</span></div></div>
-      <button onClick={() => { if (confirm("确定清空全部学习进度吗？")) resetAll(); }} className="mt-6 w-full flex items-center justify-center gap-2 rounded-xl border border-[#f1d7d9] text-[#d45862] py-3 text-sm font-semibold"><RotateCcw size={15} />重置学习进度</button>
+    <div className="mt-4 overflow-hidden rounded-[24px] bg-white px-4 shadow-[0_12px_32px_rgba(31,57,120,.06)]">
+      <div className="flex items-center gap-3 py-4">
+        <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#edf2ff] text-[#335eea]"><Cloud size={19} /></span>
+        <span className="flex-1"><strong className="block text-[15px]">云端同步</strong><span className="mt-0.5 block text-xs text-[#8b96ac]">学习进度自动保留</span></span>
+        <span className={`text-sm font-bold ${sync.className}`}>{sync.label}</span>
+      </div>
+      <button type="button" aria-label="我的收藏" onClick={() => setView("favorites")} className="flex w-full items-center gap-3 border-t border-[#edf0f6] py-4 text-left">
+        <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#fff0f2] text-[#e45d6a]"><Heart size={19} fill="currentColor" /></span>
+        <span className="flex-1"><strong className="block text-[15px]">我的收藏</strong><span className="mt-0.5 block text-xs text-[#8b96ac]">已收藏的场景对话</span></span>
+        <ChevronRight size={19} className="text-[#c1c8d6]" />
+      </button>
     </div>
-    <div className="mt-4 rounded-2xl bg-white/70 border border-[#e7ebf4] p-4 text-center text-xs text-[#8b96ac]"><UserRound size={15} className="inline mr-1" />粤语开口练 · AI 语音 / 场景对话 / 电影模仿</div>
+    <button type="button" aria-label="退出登录" onClick={logout} className="mt-8 flex w-full items-center justify-center gap-2 rounded-2xl border border-[#f1d7d9] bg-white py-3.5 text-sm font-bold text-[#d45862]"><LogOut size={17} />退出登录</button>
     {editOpen && profile && <EditProfileSheet profile={profile} onClose={() => setEditOpen(false)} onSaved={setProfile} />}
+    </div>
   </div>;
+}
+
+function syncPresentation(status: SyncStatus) {
+  if (status === "syncing") return { label: "正在同步", className: "text-[#d28a22]" };
+  if (status === "synced") return { label: "已同步", className: "text-[#2b9b68]" };
+  if (status === "error") return { label: "同步失败", className: "text-[#d45862]" };
+  return { label: "尚未同步", className: "text-[#8b96ac]" };
 }
 
 function EditProfileSheet({ profile, onClose, onSaved }: { profile: Profile; onClose: () => void; onSaved: (p: Profile) => void }) {

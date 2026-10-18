@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ProfileScreen from "../screens/ProfileScreen";
 import { AuthFlow } from "../components/auth/AuthFlow";
 import { LoginPanel } from "../components/auth/LoginPanel";
 import * as store from "../lib/store";
 import * as api from "../lib/api";
+import { useSyncStatus } from "../lib/sync-status";
 
 vi.mock("../lib/store", async (load) => {
   const actual = await load<typeof import("../lib/store")>();
@@ -14,11 +15,23 @@ vi.mock("../lib/store", async (load) => {
 });
 vi.mock("../lib/api", async (load) => {
   const actual = await load<typeof import("../lib/api")>();
-  return { ...actual, sendSmsLoginCode: vi.fn() };
+  return { ...actual, sendSmsLoginCode: vi.fn(), getProfile: vi.fn(), updateProfile: vi.fn() };
 });
+vi.mock("../lib/sync-status", async (load) => {
+  const actual = await load<typeof import("../lib/sync-status")>();
+  return { ...actual, useSyncStatus: vi.fn(() => "synced") };
+});
+vi.mock("../components/profile/FavoritesView", () => ({
+  default: ({ onBack, onOpenScene }: { onBack: () => void; onOpenScene: (id: number) => void }) => <div><h1>收藏测试页</h1><button onClick={() => onOpenScene(7)}>打开测试场景</button><button onClick={onBack}>返回账号中心</button></div>,
+}));
 
 describe("登录界面", () => {
-  beforeEach(() => { localStorage.clear(); vi.clearAllMocks(); });
+  beforeEach(() => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    vi.mocked(api.getProfile).mockResolvedValue({ username: "tester", nickname: "阿明", avatar: "😎" });
+    vi.mocked(useSyncStatus).mockReturnValue("synced");
+  });
 
   it("未登录的我的页面直接显示认证表单并隐藏设置", () => {
     render(<ProfileScreen />);
@@ -71,5 +84,58 @@ describe("登录界面", () => {
     await userEvent.type(screen.getByLabelText("验证码"), "123456");
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
     await waitFor(() => expect(store.smsLoginAndSync).toHaveBeenCalledWith("13812345678", "123456"));
+  });
+
+  it("登录后显示 C3 账号中心且不再出现旧设置", async () => {
+    localStorage.setItem("yueToken", "token");
+    render(<ProfileScreen />);
+    expect(await screen.findByText("阿明")).toBeInTheDocument();
+    expect(screen.getByText("@tester")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "编辑资料" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "我的收藏" })).toBeInTheDocument();
+    expect(screen.getByText("已同步")).toBeInTheDocument();
+    expect(screen.queryByText("基础设置")).not.toBeInTheDocument();
+    expect(screen.queryByText("每日学习目标")).not.toBeInTheDocument();
+    expect(screen.queryByText("重置学习进度")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["idle", "尚未同步"],
+    ["syncing", "正在同步"],
+    ["synced", "已同步"],
+    ["error", "同步失败"],
+  ] as const)("同步状态 %s 显示为 %s", async (status, label) => {
+    localStorage.setItem("yueToken", "token");
+    vi.mocked(useSyncStatus).mockReturnValue(status);
+    render(<ProfileScreen />);
+    expect(await screen.findByText(label)).toBeInTheDocument();
+  });
+
+  it("可以编辑资料、进入收藏、返回并把收藏场景交给上层打开", async () => {
+    localStorage.setItem("yueToken", "token");
+    const onOpenScene = vi.fn();
+    render(<ProfileScreen onOpenScene={onOpenScene} />);
+    await screen.findByText("阿明");
+    fireEvent.click(screen.getByRole("button", { name: "编辑资料" }));
+    const editTitle = screen.getByText("编辑资料");
+    expect(editTitle).toBeInTheDocument();
+    fireEvent.click(editTitle.parentElement!.querySelector("button")!);
+    fireEvent.click(screen.getByRole("button", { name: "我的收藏" }));
+    expect(screen.getByRole("heading", { name: "收藏测试页" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "打开测试场景" }));
+    expect(onOpenScene).toHaveBeenCalledWith(7);
+    fireEvent.click(screen.getByRole("button", { name: "返回账号中心" }));
+    expect(screen.getByRole("button", { name: "我的收藏" })).toBeInTheDocument();
+  });
+
+  it("退出登录回到极简登录，迟到的资料响应不会恢复旧用户", async () => {
+    let resolve!: (profile: api.Profile) => void;
+    vi.mocked(api.getProfile).mockReturnValue(new Promise((done) => { resolve = done; }));
+    localStorage.setItem("yueToken", "token");
+    render(<ProfileScreen />);
+    fireEvent.click(screen.getByRole("button", { name: "退出登录" }));
+    expect(screen.getByRole("heading", { name: "欢迎回来" })).toBeInTheDocument();
+    await act(async () => resolve({ username: "old-user", nickname: "旧用户" }));
+    expect(screen.queryByText("旧用户")).not.toBeInTheDocument();
   });
 });
