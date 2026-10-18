@@ -14,13 +14,18 @@ const tabs = [
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<(typeof tabs)[number]["id"]>("voice");
+  const [requestedSceneId, setRequestedSceneId] = useState<number | null>(null);
+  function openFavoriteScene(id: number) {
+    setRequestedSceneId(id);
+    setActiveTab("scene");
+  }
   return (
     <div className="flex flex-col h-full bg-[#f7f8fc] max-w-[430px] mx-auto relative overflow-hidden">
       <div className="flex-1 min-h-0 overflow-y-auto">
         {activeTab === "voice" && <HomeScreen />}
-        {activeTab === "scene" && <SceneDialogueScreen />}
+        {activeTab === "scene" && <SceneDialogueScreen requestedSceneId={requestedSceneId} onRequestHandled={() => setRequestedSceneId(null)} />}
         {activeTab === "movie" && <MovieImitationScreen />}
-        {activeTab === "profile" && <ProfileScreen />}
+        {activeTab === "profile" && <ProfileScreen onOpenScene={openFavoriteScene} />}
       </div>
       <nav aria-label="主要功能" className="flex-shrink-0 bg-white border-t border-[#edf0f7] flex items-center pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_24px_rgba(37,55,100,0.04)]">
         {tabs.map((tab) => {

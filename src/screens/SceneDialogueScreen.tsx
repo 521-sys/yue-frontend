@@ -6,7 +6,7 @@ import { listPublishedScenes, getPublishedScene } from "../lib/scene-api";
 import { aiChat } from "../lib/api";
 import { dialoguePrompt, parseGeneratedDialogue, readCustomDialogues, saveCustomDialogue } from "../lib/dialogue-data";
 
-export default function SceneDialogueScreen() {
+export default function SceneDialogueScreen({ requestedSceneId, onRequestHandled }: { requestedSceneId?: number | null; onRequestHandled?: () => void }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [custom, setCustom] = useState<Dialogue[]>([]);
   const [topic, setTopic] = useState("");
@@ -23,6 +23,32 @@ export default function SceneDialogueScreen() {
     finally{if(ticket===sequence.current)setLoading(false);}
   }
   useEffect(() => {setCustom(readCustomDialogues());void refresh();return () => {sequence.current++;stopSpeak();};}, []);
+  useEffect(() => {
+    if (requestedSceneId == null) return;
+    stopSpeak();
+    setError("");
+    setLoading(true);
+    setSelected(undefined);
+    setActiveId(null);
+    const ticket = ++sequence.current;
+    void getPublishedScene(requestedSceneId)
+      .then((fresh) => {
+        if (ticket !== sequence.current) return;
+        setSelected(fresh);
+        setActiveId(fresh.id);
+      })
+      .catch((error) => {
+        if (ticket !== sequence.current) return;
+        const id = `official:${requestedSceneId}`;
+        setOfficial((items) => items.filter((scene) => scene.id !== id));
+        setError(error instanceof Error ? error.message : "场景读取失败");
+      })
+      .finally(() => {
+        if (ticket !== sequence.current) return;
+        setLoading(false);
+        onRequestHandled?.();
+      });
+  }, [requestedSceneId, onRequestHandled]);
   const all = [...official, ...custom.map(d=>({...d,id:'local:'+d.id}))];
   const dialogue: Dialogue | undefined = activeId?.startsWith('official:')?selected:all.find((d) => d.id === activeId);
   async function open(d:Dialogue){
