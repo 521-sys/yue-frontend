@@ -12,6 +12,7 @@ import {
   getToken,
   type AuthResponse,
 } from "./api";
+import { clearSyncStatus, setSyncStatus } from "./sync-status";
 
 export interface LearningState {
   learned: string[]; // 已掌握（卡片「认识」）的词 id
@@ -166,10 +167,14 @@ let skipUpload = false;
 /** 防抖上传：本地状态变更后 1.5s 内无新操作才上传，避免高频请求 */
 function scheduleUpload() {
   if (uploadTimer) clearTimeout(uploadTimer);
+  setSyncStatus("syncing");
   uploadTimer = setTimeout(async () => {
+    uploadTimer = null;
     try {
       await pushState(state);
+      setSyncStatus("synced");
     } catch (e) {
+      setSyncStatus("error");
       console.warn("学习状态上传失败：", e);
     }
   }, 1500);
@@ -178,14 +183,20 @@ function scheduleUpload() {
 /** 登录成功后的公共处理：存 token → 拉取云端状态覆盖本地（last-write-wins） */
 async function syncAfterLogin(r: AuthResponse): Promise<{ username: string }> {
   setToken(r.token);
+  setSyncStatus("syncing");
   try {
     const cloud = await fetchState();
     if (cloud.hasCloudData && cloud.state) {
       skipUpload = true;
-      save({ ...DEFAULT, ...(cloud.state as LearningState) });
-      skipUpload = false;
+      try {
+        save({ ...DEFAULT, ...(cloud.state as LearningState) });
+      } finally {
+        skipUpload = false;
+      }
     }
+    setSyncStatus("synced");
   } catch {
+    setSyncStatus("error");
     /* 云端拉取失败不阻塞登录 */
   }
   return { username: r.username };
@@ -221,9 +232,12 @@ export async function registerAndSync(
 ): Promise<{ username: string }> {
   const r = await apiRegister(username, password);
   setToken(r.token);
+  setSyncStatus("syncing");
   try {
     await pushState(state);
+    setSyncStatus("synced");
   } catch (e) {
+    setSyncStatus("error");
     console.warn("初始状态上传失败：", e);
   }
   return { username: r.username };
@@ -236,9 +250,12 @@ export async function phoneRegisterAndSync(
 ): Promise<{ username: string }> {
   const r = await apiPhoneRegister(phone, password);
   setToken(r.token);
+  setSyncStatus("syncing");
   try {
     await pushState(state);
+    setSyncStatus("synced");
   } catch (e) {
+    setSyncStatus("error");
     console.warn("初始状态上传失败：", e);
   }
   return { username: r.username };
@@ -246,7 +263,12 @@ export async function phoneRegisterAndSync(
 
 /** 退出登录：清除 token，本地数据保留 */
 export function logout() {
+  if (uploadTimer) {
+    clearTimeout(uploadTimer);
+    uploadTimer = null;
+  }
   clearToken();
+  clearSyncStatus();
 }
 
 export { isLoggedin, currentUser } from "./api";

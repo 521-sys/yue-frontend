@@ -8,6 +8,7 @@ import {
   resetAll,
   setDailyGoal,
   subscribe,
+  logout,
   type LearningState,
 } from "../lib/store";
 
@@ -271,6 +272,14 @@ describe("store.ts 状态层", () => {
       expect(raw).not.toBeNull();
       const parsed = JSON.parse(raw!);
       expect(parsed.learned).toEqual(["w1"]);
+    });
+  });
+
+  describe("logout", () => {
+    it("退出登录不清空本地学习数据", () => {
+      markLearned("offline-word");
+      logout();
+      expect(getState().learned).toContain("offline-word");
     });
   });
 });
