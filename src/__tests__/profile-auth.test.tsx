@@ -11,11 +11,11 @@ import { useSyncStatus } from "../lib/sync-status";
 
 vi.mock("../lib/store", async (load) => {
   const actual = await load<typeof import("../lib/store")>();
-  return { ...actual, loginAndSync: vi.fn(), phoneLoginAndSync: vi.fn(), smsLoginAndSync: vi.fn(), registerAndSync: vi.fn(), phoneRegisterAndSync: vi.fn() };
+  return { ...actual, loginAndSync: vi.fn(), phoneLoginAndSync: vi.fn(), smsLoginAndSync: vi.fn(), emailLoginAndSync: vi.fn(), registerAndSync: vi.fn(), phoneRegisterAndSync: vi.fn() };
 });
 vi.mock("../lib/api", async (load) => {
   const actual = await load<typeof import("../lib/api")>();
-  return { ...actual, sendSmsLoginCode: vi.fn(), getProfile: vi.fn(), updateProfile: vi.fn() };
+  return { ...actual, sendSmsLoginCode: vi.fn(), sendEmailLoginCode: vi.fn(), getProfile: vi.fn(), updateProfile: vi.fn() };
 });
 vi.mock("../lib/sync-status", async (load) => {
   const actual = await load<typeof import("../lib/sync-status")>();
@@ -41,6 +41,7 @@ describe("登录界面", () => {
     expect(screen.getByLabelText("密码")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "首次使用？创建账号" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "短信登录" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "邮箱登录" })).not.toBeInTheDocument();
     expect(screen.queryByText("基础设置")).not.toBeInTheDocument();
     expect(screen.queryByText("每日学习目标")).not.toBeInTheDocument();
     expect(screen.queryByText("重置学习进度")).not.toBeInTheDocument();
@@ -84,6 +85,48 @@ describe("登录界面", () => {
     await userEvent.type(screen.getByLabelText("验证码"), "123456");
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
     await waitFor(() => expect(store.smsLoginAndSync).toHaveBeenCalledWith("13812345678", "123456"));
+  });
+
+  it("邮箱登录校验地址、使用服务端倒计时并完成登录同步", async () => {
+    vi.mocked(api.sendEmailLoginCode).mockResolvedValue({ accepted: true, retryAfterSeconds: 73 });
+    vi.mocked(store.emailLoginAndSync).mockResolvedValue({ username: "mail-user" });
+    const done = vi.fn();
+    render(<LoginPanel phone="" onPhoneChange={() => {}} onRegister={() => {}} onAuthenticated={done} emailEnabled />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "邮箱登录" }));
+    expect(screen.getByText("未注册邮箱验证后将自动创建账号")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("邮箱"), "not-an-email");
+    fireEvent.click(screen.getByRole("button", { name: "获取验证码" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("请输入正确的邮箱地址");
+    expect(api.sendEmailLoginCode).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: `${"a".repeat(245)}@example.com` } });
+    fireEvent.click(screen.getByRole("button", { name: "获取验证码" }));
+    expect(api.sendEmailLoginCode).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "User@Example.COM" } });
+    fireEvent.click(screen.getByRole("button", { name: "获取验证码" }));
+    expect(await screen.findByRole("button", { name: "73秒后重发" })).toBeDisabled();
+    expect(api.sendEmailLoginCode).toHaveBeenCalledWith("user@example.com");
+
+    await userEvent.type(screen.getByLabelText("验证码"), "123456");
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+    await waitFor(() => expect(store.emailLoginAndSync).toHaveBeenCalledWith("user@example.com", "123456"));
+    expect(done).toHaveBeenCalled();
+  });
+
+  it("邮箱错误稳定显示，切换标签会清除错误但保留邮箱", async () => {
+    vi.mocked(api.sendEmailLoginCode).mockRejectedValue(new Error("邮箱服务暂不可用，请稍后重试"));
+    render(<LoginPanel phone="" onPhoneChange={() => {}} onRegister={() => {}} emailEnabled />);
+    fireEvent.click(screen.getByRole("tab", { name: "邮箱登录" }));
+    await userEvent.type(screen.getByLabelText("邮箱"), "user@example.com");
+    fireEvent.click(screen.getByRole("button", { name: "获取验证码" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("邮箱服务暂不可用，请稍后重试");
+
+    fireEvent.click(screen.getByRole("tab", { name: "密码登录" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "邮箱登录" }));
+    expect(screen.getByLabelText("邮箱")).toHaveValue("user@example.com");
   });
 
   it("登录后显示 C3 账号中心且不再出现旧设置", async () => {
