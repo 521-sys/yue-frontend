@@ -5,6 +5,7 @@ import {
   phoneLogin as apiPhoneLogin,
   phoneRegister as apiPhoneRegister,
   smsLogin as apiSmsLogin,
+  emailLogin as apiEmailLogin,
   fetchState,
   pushState,
   setToken,
@@ -223,6 +224,13 @@ export async function smsLoginAndSync(
   code: string
 ): Promise<{ username: string }> {
   return syncAfterLogin(await apiSmsLogin(phone, code));
+}
+
+export async function emailLoginAndSync(
+  email: string,
+  code: string
+): Promise<{ username: string }> {
+  return syncAfterLogin(await apiEmailLogin(email, code));
 }
 
 /** 注册新账号（新用户无云端数据，注册即上传当前本地状态作为初始记录） */

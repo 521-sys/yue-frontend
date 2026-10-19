@@ -154,6 +154,24 @@ export async function smsLogin(phone: string, code: string): Promise<AuthRespons
   return res.json();
 }
 
+export async function sendEmailLoginCode(
+  email: string
+): Promise<{ accepted: boolean; retryAfterSeconds: number }> {
+  const res = await authFetch("/api/auth/email/code", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+  return res.json();
+}
+
+export async function emailLogin(email: string, code: string): Promise<AuthResponse> {
+  const res = await authFetch("/api/auth/email/login", {
+    method: "POST",
+    body: JSON.stringify({ email, code }),
+  });
+  return res.json();
+}
+
 /** 拉取个人资料（昵称/头像/脱敏手机号） */
 export async function getProfile(): Promise<Profile> {
   const res = await authFetch("/api/user/profile");

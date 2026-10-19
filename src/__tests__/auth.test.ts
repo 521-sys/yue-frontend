@@ -112,6 +112,42 @@ describe("登录与云端同步（store + api 联动）", () => {
     expect(fetchMock.mock.calls[0][1]?.body).toBe(JSON.stringify({ phone: "13812345678" }));
   });
 
+  it("sendEmailLoginCode：使用邮箱接口并保留 429 重试秒数", async () => {
+    const { sendEmailLoginCode, ApiError } = await import("../lib/api");
+    fetchMock.mockResolvedValue({
+      ok: false, status: 429, statusText: "Too Many Requests",
+      json: async () => ({ error: "请求过于频繁，请稍后重试", retryAfterSeconds: 41 }),
+    } as Response);
+
+    await expect(sendEmailLoginCode("user@example.com")).rejects.toMatchObject({
+      constructor: ApiError, message: "请求过于频繁，请稍后重试", status: 429, retryAfterSeconds: 41,
+    });
+    expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/api\/auth\/email\/code$/);
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      method: "POST", body: JSON.stringify({ email: "user@example.com" }),
+    });
+  });
+
+  it("emailLoginAndSync：保存 token、拉取云端且不回灌上传", async () => {
+    fetchMock.mockImplementation(async (url: string | URL, init?: RequestInit) => {
+      if (String(url).endsWith("/api/auth/email/login")) {
+        expect(init).toMatchObject({
+          method: "POST",
+          body: JSON.stringify({ email: "user@example.com", code: "123456" }),
+        });
+        return jsonOk({ token: "email-token", username: "mail-user", userId: 9 });
+      }
+      return jsonOk({ hasCloudData: true, state: { learned: ["email-word"] } });
+    });
+
+    const r = await store.emailLoginAndSync("user@example.com", "123456");
+
+    expect(r.username).toBe("mail-user");
+    expect(localStorage.getItem("yueToken")).toBe("email-token");
+    expect(store.getState().learned).toContain("email-word");
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(0);
+  });
+
   it("phoneRegisterAndSync：手机号注册成功后上传本地状态作为初始记录", async () => {
     fetchMock.mockImplementation(async (url: string | URL, init?: RequestInit) => {
       if (String(url).endsWith("/api/auth/phone/register")) {
