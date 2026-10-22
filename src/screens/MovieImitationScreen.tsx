@@ -1,20 +1,38 @@
 import { useEffect, useRef, useState } from "react";
 import { Film, Mic, RotateCcw, Square } from "lucide-react";
 import { activeCueAt, cueIsValid, recordingWindow, parseSrt, serializeSrt, type DubbingCue } from "../lib/dubbing-timeline";
-import { loadDubbingProject, saveDubbingProject } from "../lib/dubbing-project";
+import { loadDubbingProject, saveDubbingProject, type DubbingProject } from "../lib/dubbing-project";
 import { DubbingPreview } from "../lib/dubbing-preview";
 import { transcribeLocalVideo } from "../lib/local-transcription";
 import { transcribeCloudVideo } from "../lib/cloud-transcription";
+import { type DubbingMaterial, type DubbingMaterialPart } from "../data/dubbing-materials";
+import { loadDubbingMaterials } from "../lib/dubbing-materials-api";
 
 const cloudTranscription = import.meta.env.PROD || import.meta.env.VITE_DUBBING_ASR_PROVIDER === "tencent";
 
-export default function MovieImitationScreen() {
+interface MovieImitationScreenProps {
+  materials?: DubbingMaterial[];
+  loadProject?: typeof loadDubbingProject;
+  saveProject?: typeof saveDubbingProject;
+}
+
+export default function MovieImitationScreen({
+  materials: providedMaterials,
+  loadProject = loadDubbingProject,
+  saveProject = saveDubbingProject,
+}: MovieImitationScreenProps) {
+  const [remoteMaterials, setRemoteMaterials] = useState<DubbingMaterial[]>([]);
+  const [catalogState, setCatalogState] = useState<"loading" | "ready" | "error">(providedMaterials === undefined ? "loading" : "ready");
+  const [catalogError, setCatalogError] = useState("");
+  const [catalogRetry, setCatalogRetry] = useState(0);
+  const materials = providedMaterials ?? remoteMaterials;
   const [storageReady, setStorageReady] = useState(false);
   const [saveStatus, setSaveStatus] = useState("正在读取本机作品…");
   const [saveFailed, setSaveFailed] = useState(false);
   const [saveRetry, setSaveRetry] = useState(0);
   const mediaBlobs = useRef({ background: null as Blob | null, takes: {} as Record<string, Blob> });
   const loadRevision = useRef(0);
+  const deferredBuiltInDraft = useRef<Extract<DubbingProject, {version: 2}> | null>(null);
   const saveRevision = useRef(0);
   const storageRevision = useRef<string | undefined>(undefined);
   const [videoSrc, setVideoSrc] = useState("");
@@ -40,6 +58,10 @@ export default function MovieImitationScreen() {
   const [transcribing, setTranscribing] = useState(false);
   const [transcriptionProgress, setTranscriptionProgress] = useState("正在识别");
   const [importingSubtitles, setImportingSubtitles] = useState(false);
+  const [selectedMaterialId, setSelectedMaterialId] = useState("");
+  const [selectedPartId, setSelectedPartId] = useState("");
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(false);
   const subtitleReadPending = useRef(false);
   const videoFile = useRef<File | null>(null);
   const transcription = useRef<AbortController | null>(null);
@@ -59,6 +81,47 @@ export default function MovieImitationScreen() {
   const recordingInterrupted = useRef(false);
   const previousVideoMuted = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function restoreDraft(draft: DubbingProject, builtIn?: {material: DubbingMaterial; part: DubbingMaterialPart}) {
+    storageRevision.current = draft.storageRevision;
+    if (draft.version === 1) {
+      videoFile.current = new File([draft.video], draft.videoName, { type: draft.video.type });
+      urls.current.video = URL.createObjectURL(draft.video);
+      setVideoSrc(urls.current.video);
+    } else {
+      if (!builtIn) return;
+      videoFile.current = null;
+      setSelectedMaterialId(builtIn.material.id); setSelectedPartId(builtIn.part.id);
+      setVideoSrc(builtIn.part.videoSrc);
+    }
+    urls.current.background = draft.background ? URL.createObjectURL(draft.background) : "";
+    mediaBlobs.current = { background: draft.background, takes: {} };
+    for (const [id, take] of Object.entries(draft.takes)) {
+      mediaBlobs.current.takes[id] = take.blob;
+      takeStarts.current[id] = take.startMs;
+      urls.current.takes[id] = URL.createObjectURL(take.blob);
+    }
+    setBackgroundSrc(urls.current.background);
+    setBackgroundName(draft.backgroundName); setCues(draft.cues);
+    setTakeUrls({ ...urls.current.takes }); setSelectedCueId(draft.selectedCueId);
+    setPlayVideoAudio(draft.playVideoAudio); setAutoAdvance(draft.autoAdvance);
+    setEditorOpen(true); setSaveStatus("已恢复本机作品"); setStorageReady(true);
+  }
+
+  useEffect(() => {
+    if (providedMaterials !== undefined) { setCatalogState("ready"); setCatalogError(""); return; }
+    const controller = new AbortController();
+    setCatalogState("loading"); setCatalogError("");
+    void loadDubbingMaterials(controller.signal).then((items) => {
+      if (controller.signal.aborted) return;
+      setRemoteMaterials(items); setCatalogState("ready");
+    }).catch((cause) => {
+      if (controller.signal.aborted) return;
+      setCatalogError(cause instanceof Error ? cause.message : "电影配音素材加载失败，请稍后重试");
+      setCatalogState("error");
+    });
+    return () => controller.abort();
+  }, [providedMaterials, catalogRetry]);
 
   useEffect(() => {
     mounted.current = true;
@@ -80,25 +143,19 @@ export default function MovieImitationScreen() {
   useEffect(() => {
     let cancelled = false;
     const revision = loadRevision.current;
-    void loadDubbingProject().then((draft) => {
+    void loadProject().then((draft) => {
       if (cancelled || revision !== loadRevision.current) return;
-      storageRevision.current = draft?.storageRevision;
-      if (revision === loadRevision.current && draft) {
-        videoFile.current = new File([draft.video], draft.videoName, { type: draft.video.type });
-        urls.current.video = URL.createObjectURL(draft.video);
-        urls.current.background = draft.background ? URL.createObjectURL(draft.background) : "";
-        mediaBlobs.current = { background: draft.background, takes: {} };
-        for (const [id, take] of Object.entries(draft.takes)) {
-          mediaBlobs.current.takes[id] = take.blob;
-          takeStarts.current[id] = take.startMs;
-          urls.current.takes[id] = URL.createObjectURL(take.blob);
-        }
-        setVideoSrc(urls.current.video); setBackgroundSrc(urls.current.background);
-        setBackgroundName(draft.backgroundName); setCues(draft.cues);
-        setTakeUrls({ ...urls.current.takes }); setSelectedCueId(draft.selectedCueId);
-        setPlayVideoAudio(draft.playVideoAudio); setAutoAdvance(draft.autoAdvance);
+      if (!draft) { setSaveStatus("导入视频后自动保存到当前浏览器"); setStorageReady(true); return; }
+      if (draft.version === 1) { restoreDraft(draft); return; }
+      const material = materials.find((item) => item.id === draft.source.materialId);
+      const part = material?.parts.find((item) => item.id === draft.source.partId);
+      if (material && part) { restoreDraft(draft, {material, part}); return; }
+      if (providedMaterials === undefined && catalogState !== "ready") {
+        deferredBuiltInDraft.current = draft;
+        setSaveStatus("正在加载素材，以恢复上次的内置配音作品…");
+        return;
       }
-      setSaveStatus(draft ? "已恢复本机作品" : "导入视频后自动保存到当前浏览器");
+      setSaveStatus("上次使用的内置素材当前不可用，请重新选择素材。");
       setStorageReady(true);
     }).catch(() => {
       if (cancelled || revision !== loadRevision.current) return;
@@ -109,20 +166,36 @@ export default function MovieImitationScreen() {
   }, []);
 
   useEffect(() => {
-    if (!storageReady || !videoFile.current) return;
+    const draft = deferredBuiltInDraft.current;
+    if (!draft || catalogState !== "ready") return;
+    const material = materials.find((item) => item.id === draft.source.materialId);
+    const part = material?.parts.find((item) => item.id === draft.source.partId);
+    deferredBuiltInDraft.current = null;
+    if (!material || !part) {
+      setSaveStatus("上次使用的内置素材当前不可用，请重新选择素材。");
+      setStorageReady(true);
+      return;
+    }
+    restoreDraft(draft, {material, part});
+  }, [catalogState, materials]);
+
+  useEffect(() => {
+    if (!storageReady || (!videoFile.current && (!selectedMaterialId || !selectedPartId))) return;
     const revision = ++saveRevision.current;
     const takes = Object.fromEntries(Object.entries(mediaBlobs.current.takes).map(([id, blob]) => [id, { blob, startMs: takeStarts.current[id] ?? 0 }]));
     setSaveStatus("正在保存到当前浏览器，请稍候再关闭页面…"); setSaveFailed(false);
-    void saveDubbingProject({ version: 1, video: videoFile.current, videoName: videoFile.current.name,
-      background: mediaBlobs.current.background, backgroundName, cues, takes, selectedCueId, playVideoAudio, autoAdvance,
-    }, storageRevision).then(() => {
+    const common = { background: mediaBlobs.current.background, backgroundName, cues, takes, selectedCueId, playVideoAudio, autoAdvance };
+    const project = videoFile.current
+      ? { version: 1 as const, video: videoFile.current, videoName: videoFile.current.name, ...common }
+      : { version: 2 as const, source: { kind: "built-in" as const, materialId: selectedMaterialId, partId: selectedPartId }, ...common };
+    void saveProject(project, storageRevision).then(() => {
       if (mounted.current && revision === saveRevision.current) setSaveStatus("已保存到当前浏览器");
     }).catch((cause) => {
       if (mounted.current && revision === saveRevision.current) {
         setSaveFailed(true); setSaveStatus(cause instanceof Error && cause.message.includes("另一页面") ? cause.message : "保存失败，可能是空间不足或浏览器限制。当前更改尚未保存，请勿关闭页面。");
       }
     });
-  }, [storageReady, videoSrc, backgroundSrc, backgroundName, cues, takeUrls, selectedCueId, playVideoAudio, autoAdvance, saveRetry]);
+  }, [storageReady, videoSrc, backgroundSrc, backgroundName, cues, takeUrls, selectedCueId, playVideoAudio, autoAdvance, selectedMaterialId, selectedPartId, saveRetry]);
 
   function clearRecording(cueId: string) {
     stopPreview();
@@ -151,6 +224,7 @@ export default function MovieImitationScreen() {
     transcription.current = null;
     setTranscribing(false);
     loadRevision.current += 1;
+    deferredBuiltInDraft.current = null;
     setStorageReady(true);
     mediaBlobs.current.background = null;
     videoFile.current = file;
@@ -164,6 +238,39 @@ export default function MovieImitationScreen() {
     setCues([]); setSelectedCueId("");
     setBackgroundSrc(""); setBackgroundName("");
     setVideoSrc(url); setTime(0); setDuration(0); setVideoMissing(false); setError("");
+    setSelectedMaterialId(""); setSelectedPartId(""); setEditorOpen(true); setCatalogOpen(false);
+  }
+
+  function selectBuiltInPart(material: DubbingMaterial, part: DubbingMaterialPart) {
+    if (recording || starting || preparing || transcribing || importingSubtitles || previewing || pending.current || recorder.current?.state === "recording") return;
+    if (material.id === selectedMaterialId && part.id === selectedPartId) {
+      if (catalogOpen) { setCatalogOpen(false); setEditorOpen(false); }
+      return;
+    }
+    const currentPart = materials.find((item) => item.id === selectedMaterialId)?.parts.find((item) => item.id === selectedPartId);
+    const changed = Object.keys(takeUrls).length > 0 || Boolean(backgroundSrc) || Boolean(currentPart && JSON.stringify(cues) !== JSON.stringify(currentPart.cues));
+    if (currentPart && changed && !globalThis.confirm("切换片段会清空当前片段的录音和台词修改，是否继续？")) return;
+    transcriptionSequence.current += 1;
+    transcription.current?.abort();
+    transcription.current = null;
+    setTranscribing(false);
+    loadRevision.current += 1;
+    deferredBuiltInDraft.current = null;
+    setStorageReady(true);
+    videoFile.current = null;
+    stopPreview();
+    if (urls.current.video) URL.revokeObjectURL(urls.current.video);
+    if (urls.current.background) URL.revokeObjectURL(urls.current.background);
+    urls.current.video = "";
+    urls.current.background = "";
+    mediaBlobs.current.background = null;
+    clearAllRecordings();
+    const nextCues = part.cues.map((cue) => ({ ...cue }));
+    setCues(nextCues);
+    setSelectedCueId(nextCues[0]?.id ?? "");
+    setBackgroundSrc(""); setBackgroundName("");
+    setVideoSrc(part.videoSrc); setTime(0); setDuration(0); setVideoMissing(false); setError("");
+    setSelectedMaterialId(material.id); setSelectedPartId(part.id); setEditorOpen(false); setCatalogOpen(false);
   }
 
   function importBackground(file?: File) {
@@ -427,11 +534,68 @@ export default function MovieImitationScreen() {
   const recordedUrl = selectedCue ? takeUrls[selectedCue.id] : "";
   const activeCue = activeCueAt(cues, time * 1000);
   const highlightedCueId = activeCue?.id;
+  const selectedMaterial = materials.find((material) => material.id === selectedMaterialId);
+  const selectedPart = selectedMaterial?.parts.find((part) => part.id === selectedPartId);
+  const partSwitchDisabled = recording || starting || preparing || transcribing || importingSubtitles || previewing;
+  const previewCueText = activeCue?.text ?? (time === 0 ? selectedPart?.cues[0]?.text : undefined);
+
+  if (catalogOpen || !videoSrc) return <div className="min-h-full bg-[#f7f8fc] px-6 pt-12 pb-28 text-[#192b59]">
+    <p className="text-[#617bd1] text-sm font-semibold">选一段 · 你来配音</p>
+    <h1 className="text-[30px] font-black mt-1">电影模仿</h1>
+    {saveFailed && <div role="alert" className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+      <p>{saveStatus}</p>
+      {storageReady && <button className="mt-2 font-bold text-[#335eea]" onClick={() => setSaveRetry((value) => value + 1)}>重试保存</button>}
+    </div>}
+    <section className="mt-8" aria-labelledby="built-in-dubbing-heading">
+      <div className="flex items-center justify-between gap-3">
+        <h2 id="built-in-dubbing-heading" className="text-xl font-black">内置粤语片段</h2>
+        <span className="text-xs text-[#8290aa]">只收录已核验素材</span>
+      </div>
+      {providedMaterials === undefined && catalogState === "loading" && <p role="status" className="mt-4 rounded-2xl bg-white p-5 text-sm text-[#66758f] shadow-sm border border-[#e6ebf4]">正在加载粤语片段…</p>}
+      {providedMaterials === undefined && catalogState === "error" && <div role="alert" className="mt-4 rounded-2xl bg-red-50 p-5 text-sm text-red-700 border border-red-100"><p>{catalogError}</p><button className="mt-3 font-bold text-[#335eea]" onClick={() => setCatalogRetry((value) => value + 1)}>重试加载素材</button></div>}
+      {catalogState === "ready" && materials.length ? <div className="mt-4 grid gap-3">
+        {materials.map((material) => <button key={material.id} onClick={() => material.parts[0] && selectBuiltInPart(material, material.parts[0])} disabled={!material.parts.length} className="rounded-2xl bg-white p-4 text-left shadow-sm border border-[#e6ebf4] disabled:opacity-50">
+          <span className="block font-black text-lg">{material.title}</span>
+          <span className="mt-2 block text-xs text-[#8290aa]">{material.parts.length} 个片段 · 难度 {material.difficulty}</span>
+          <span className="mt-3 flex flex-wrap gap-2">{material.tags.map((tag) => <span key={tag} className="rounded-full bg-[#eaf8ef] px-3 py-1 text-xs font-semibold text-[#259653]">{tag}</span>)}</span>
+        </button>)}
+      </div> : catalogState === "ready" && <div className="mt-4 rounded-2xl bg-white p-5 text-sm text-[#66758f] shadow-sm border border-[#e6ebf4]">暂时没有已发布的粤语片段，请稍后再来。</div>}
+    </section>
+    {videoSrc && <button onClick={() => setCatalogOpen(false)} className="mt-6 w-full rounded-2xl bg-[#36c94f] py-4 font-bold text-white">继续当前作品</button>}
+    <input ref={input} aria-label="选择视频" type="file" accept="video/*" className="hidden" onChange={(e) => { importVideo(e.target.files?.[0]); e.target.value = ""; }} />
+    <button onClick={() => input.current?.click()} className="mt-6 w-full rounded-2xl bg-[#edf2ff] text-[#335eea] py-4 font-bold flex items-center justify-center gap-2"><Film size={18} />导入我的视频</button>
+  </div>;
+
+  if (selectedMaterial && selectedPart && !editorOpen) return <div className="min-h-full bg-[#f7f8fc] px-6 pt-12 pb-28 text-[#192b59]">
+    <p className="text-[#617bd1] text-sm font-semibold">纯粤语片段 · 你来配音</p>
+    <div className="mt-5 rounded-[26px] overflow-hidden bg-[#111b37] aspect-video relative">
+      <video ref={video} key={videoSrc} src={videoSrc} className="w-full h-full object-contain" playsInline controls onLoadedMetadata={(e) => { const d = e.currentTarget.duration; setDuration(Number.isFinite(d) ? d : 0); }} onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)} onError={() => setVideoMissing(true)} />
+      {previewCueText && <div aria-label="当前台词" className="absolute inset-x-3 bottom-12 pointer-events-none text-center text-white text-base font-bold whitespace-pre-line [text-shadow:0_2px_6px_#000,0_0_3px_#000]">{previewCueText}</div>}
+    </div>
+    {videoMissing && <p role="alert" className="mt-3 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">视频暂时无法播放，请稍后重试或选择其他片段。</p>}
+    <h1 className="mt-5 text-[26px] font-black">{selectedMaterial.title}</h1>
+    <p className="mt-2 text-sm text-[#8290aa]">{selectedPart.cues.length} 句 · 难度 {selectedMaterial.difficulty}</p>
+    <div className="mt-3 flex flex-wrap gap-2">{selectedMaterial.tags.map((tag) => <span key={tag} className="rounded-full bg-[#eaf8ef] px-3 py-1 text-sm font-semibold text-[#259653]">{tag}</span>)}</div>
+    <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-xs text-[#617bd1]">
+      <a href={selectedMaterial.sourceUrl} target="_blank" rel="noreferrer">素材来源：{selectedMaterial.sourceLabel}</a>
+      <a href={selectedMaterial.licenseUrl} target="_blank" rel="noreferrer">许可：{selectedMaterial.licenseLabel}</a>
+    </div>
+    <section className="mt-7" aria-label="片段选集">
+      <h2 className="text-lg font-black">片段选集</h2>
+      <div className="mt-3 flex gap-3 overflow-x-auto pb-2">{selectedMaterial.parts.map((part) => <button key={part.id} aria-pressed={part.id === selectedPartId} aria-label={`${part.label} ${part.title}`} disabled={partSwitchDisabled} onClick={() => selectBuiltInPart(selectedMaterial, part)} className={`min-w-36 rounded-xl border px-4 py-3 text-left disabled:opacity-50 ${part.id === selectedPartId ? "border-[#36c94f] bg-[#f1fff3] text-[#259b3d]" : "border-[#e6ebf4] bg-white"}`}><span className="block text-xs">{part.label}</span><span className="mt-1 block font-bold">{part.title}</span></button>)}</div>
+    </section>
+    <input ref={input} aria-label="选择视频" type="file" accept="video/*" className="hidden" onChange={(e) => { importVideo(e.target.files?.[0]); e.target.value = ""; }} />
+    <button onClick={() => input.current?.click()} className="mt-5 w-full rounded-xl bg-[#edf2ff] text-[#335eea] py-3 font-bold flex items-center justify-center gap-2"><Film size={18} />导入我的视频</button>
+    <div className="sticky bottom-0 z-10 -mx-6 mt-6 bg-white/95 px-6 py-4 shadow-[0_-8px_24px_rgba(25,43,89,0.08)] backdrop-blur">
+      <button disabled={videoMissing} onClick={() => setEditorOpen(true)} className="mx-auto block w-full max-w-md rounded-2xl bg-[#36c94f] py-4 text-lg font-black text-white disabled:opacity-50">开始粤语配音</button>
+    </div>
+  </div>;
 
   return <div className="min-h-full bg-[#f7f8fc] px-6 pt-12 pb-8 text-[#192b59]">
     <p className="text-[#617bd1] text-sm font-semibold">导入片段 · 你来配音</p>
     <h1 className="text-[30px] font-black mt-1">电影模仿</h1>
     <p className="text-[#8290aa] text-sm mt-2">看画面猜情绪，用自己的声音完成台词。</p>
+    <button disabled={partSwitchDisabled} onClick={() => setCatalogOpen(true)} className="mt-3 text-sm font-bold text-[#335eea] disabled:opacity-50">选择内置片段</button>
     <div className="mt-3 text-xs text-[#8290aa]" aria-label="作品保存状态">
       <p className={saveFailed ? "text-red-600" : ""}>{saveStatus}</p>
       {saveFailed && storageReady && <button className="mt-1 text-[#335eea]" onClick={() => setSaveRetry((value) => value + 1)}>重试保存</button>}
@@ -442,11 +606,16 @@ export default function MovieImitationScreen() {
       {preparing && <div role="status" className="absolute inset-0 flex items-center justify-center bg-black/50 text-white text-2xl font-bold pointer-events-none">准备 · 1</div>}
       {activeCue && videoSrc && !videoMissing && <div aria-label="当前台词" className="absolute inset-x-3 bottom-12 pointer-events-none text-center text-white text-base font-bold whitespace-pre-line [text-shadow:0_2px_6px_#000,0_0_3px_#000]">{activeCue.text}</div>}
     </div>
+    {selectedMaterial && selectedPart && <section className="mt-5" aria-label="当前内置素材">
+      <h2 className="text-2xl font-black">{selectedMaterial.title}</h2>
+      <p className="mt-1 text-sm text-[#8290aa]">{selectedPart.cues.length} 句 · 难度 {selectedMaterial.difficulty}</p>
+      <div className="mt-3 flex gap-3 overflow-x-auto pb-2">{selectedMaterial.parts.map((part) => <button key={part.id} aria-pressed={part.id === selectedPartId} aria-label={`${part.label} ${part.title}`} disabled={partSwitchDisabled} onClick={() => selectBuiltInPart(selectedMaterial, part)} className={`min-w-36 rounded-xl border px-4 py-3 text-left disabled:opacity-50 ${part.id === selectedPartId ? "border-[#36c94f] bg-[#f1fff3] text-[#259b3d]" : "border-[#e6ebf4] bg-white"}`}><span className="block text-xs">{part.label}</span><span className="mt-1 block font-bold">{part.title}</span></button>)}</div>
+    </section>}
     <input ref={input} aria-label="选择视频" type="file" accept="video/*" className="hidden" disabled={recording || starting || previewing} onChange={(e) => { importVideo(e.target.files?.[0]); e.target.value = ""; }} />
     <button disabled={recording || starting || previewing} onClick={() => input.current?.click()} className="mt-4 w-full rounded-xl bg-[#edf2ff] text-[#335eea] py-3 font-bold flex items-center justify-center gap-2 disabled:opacity-50"><Film size={18} />导入我的视频</button>
     <p className="mt-2 text-xs text-[#8290aa]">可先导入本地视频。若原片含台词，请另备无台词背景音；自动分离尚未接入。</p>
-    <button disabled={!videoSrc || !duration || videoMissing || recording || starting || transcribing || importingSubtitles || previewing} onClick={() => void handleAutoTranscribe()} className="mt-3 w-full rounded-xl bg-[#335eea] text-white py-3 font-bold disabled:opacity-50">{transcribing ? transcriptionProgress : "自动生成台词"}</button>
-    <p className="mt-2 text-xs text-[#8290aa]">{cloudTranscription ? "点击并确认后上传视频，音频由腾讯云识别粤语；需登录" : "仅点击后发送至本机识别服务"} · 最长 5 分钟，最大 200 MB</p>
+    {!selectedMaterial && <><button disabled={!videoSrc || !duration || videoMissing || recording || starting || transcribing || importingSubtitles || previewing} onClick={() => void handleAutoTranscribe()} className="mt-3 w-full rounded-xl bg-[#335eea] text-white py-3 font-bold disabled:opacity-50">{transcribing ? transcriptionProgress : "自动生成台词"}</button>
+    <p className="mt-2 text-xs text-[#8290aa]">{cloudTranscription ? "点击并确认后上传视频，音频由腾讯云识别粤语；需登录" : "仅点击后发送至本机识别服务"} · 最长 5 分钟，最大 200 MB</p></>}
     {videoSrc && !videoMissing && <div className="mt-3"><input ref={backgroundInput} aria-label="选择背景音" type="file" accept="audio/*" className="hidden" disabled={recording || starting || previewing} onChange={(e) => { importBackground(e.target.files?.[0]); e.target.value = ""; }} /><button disabled={recording || starting || previewing} onClick={() => backgroundInput.current?.click()} className="rounded-lg bg-[#edf2ff] text-[#335eea] px-3 py-2 text-sm">导入单独背景音</button>{backgroundName && <p className="text-xs text-[#8290aa] mt-1">已导入背景音：{backgroundName}</p>}<audio ref={background} data-background-track src={backgroundSrc || undefined} className="hidden" /></div>}
     {videoSrc && !videoMissing && <div className="mt-3 flex items-center gap-3"><input aria-label="视频进度" type="range" className="flex-1 min-w-0 accent-[#335eea]" min={0} max={duration || 1} step={0.1} value={Math.min(time, duration || 1)} disabled={!duration || recording || starting} onChange={(e) => { const t = Number(e.target.value); if (video.current) video.current.currentTime = t; setTime(t); }} /><span className="text-xs text-[#8290aa]">{Math.floor(time)}s / {Math.floor(duration)}s</span></div>}
     {videoSrc && !videoMissing && <section className="mt-5 bg-white rounded-2xl p-4" aria-label="字幕时间轴">
