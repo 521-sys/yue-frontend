@@ -1,10 +1,7 @@
 import type { DubbingCue } from "./dubbing-timeline";
 
-export type DubbingProject = {
+type DubbingProjectState = {
   storageRevision?: string;
-  version: 1;
-  video: Blob;
-  videoName: string;
   background: Blob | null;
   backgroundName: string;
   cues: DubbingCue[];
@@ -13,6 +10,15 @@ export type DubbingProject = {
   playVideoAudio: boolean;
   autoAdvance: boolean;
 };
+
+export type DubbingProject = DubbingProjectState & ({
+  version: 1;
+  video: Blob;
+  videoName: string;
+} | {
+  version: 2;
+  source: { kind: "built-in"; materialId: string; partId: string };
+});
 
 let writes: Promise<unknown> = Promise.resolve();
 
@@ -67,7 +73,9 @@ export async function loadDubbingProject(): Promise<DubbingProject | undefined> 
       tx.onerror = () => reject(tx.error);
     });
     if (!project) return undefined;
-    if ((project.storageRevision !== undefined && typeof project.storageRevision !== "string") || project.version !== 1 || !(project.video instanceof Blob) || typeof project.videoName !== "string"
+    const validSource = (project.version === 1 && project.video instanceof Blob && typeof project.videoName === "string")
+      || (project.version === 2 && project.source?.kind === "built-in" && typeof project.source.materialId === "string" && typeof project.source.partId === "string");
+    if ((project.storageRevision !== undefined && typeof project.storageRevision !== "string") || !validSource
       || (project.background !== null && !(project.background instanceof Blob)) || typeof project.backgroundName !== "string"
       || !Array.isArray(project.cues) || !project.cues.every((cue) => cue && typeof cue.id === "string" && typeof cue.text === "string" && Number.isFinite(cue.startMs) && Number.isFinite(cue.endMs))
       || !project.takes || typeof project.takes !== "object"

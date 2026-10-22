@@ -4,6 +4,27 @@ import Movie from "../screens/MovieImitationScreen";
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+it("locks built-in part switching while a recording is starting", async () => {
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia: vi.fn(() => new Promise(() => {})) } });
+  vi.stubGlobal("MediaRecorder", class {});
+  const materials = [{ id: "bus", title: "搭巴士", difficulty: "A1", tags: ["交通"], sourceLabel: "来源", sourceUrl: "https://example.com/source", licenseLabel: "CC BY", licenseUrl: "https://example.com/license", parts: [
+    { id: "one", label: "Part 01", title: "上车", videoSrc: "/one.mp4", cues: [{ id: "a", startMs: 0, endMs: 1200, text: "上车" }] },
+    { id: "two", label: "Part 02", title: "落车", videoSrc: "/two.mp4", cues: [{ id: "b", startMs: 0, endMs: 1200, text: "落车" }] },
+  ] }];
+  const { container } = render(<Movie materials={materials} />);
+  fireEvent.click(screen.getByRole("button", { name: /搭巴士/ }));
+  const video = container.querySelector("video")!;
+  Object.defineProperty(video, "duration", { value: 3 });
+  fireEvent.loadedMetadata(video);
+  fireEvent.click(screen.getByRole("button", { name: "开始粤语配音" }));
+  const editorVideo = container.querySelector("video")!;
+  Object.defineProperty(editorVideo, "duration", { value: 3 });
+  fireEvent.loadedMetadata(editorVideo);
+  fireEvent.click(screen.getByRole("button", { name: "录制第 1 句" }));
+  expect(await screen.findByRole("button", { name: "Part 02 落车" })).toBeDisabled();
+});
+
 async function setup(start = "00:00:02,000", end = "00:00:04,000", duration = 10) {
   vi.spyOn(URL, "createObjectURL").mockReturnValueOnce("blob:video").mockReturnValue("blob:take");
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});

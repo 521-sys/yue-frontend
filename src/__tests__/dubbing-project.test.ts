@@ -30,6 +30,19 @@ it("restores media and timing rather than temporary blob URLs", async () => {
   expect(await restored?.takes.one.blob.text()).toBe("voice");
 });
 
+it("restores an authorized built-in material without copying its video into storage", async () => {
+  const builtIn = {
+    version: 2, source: { kind: "built-in", materialId: "bus", partId: "part-1" },
+    background: null, backgroundName: "", cues: [{ id: "one", startMs: 0, endMs: 1200, text: "下一站有落" }],
+    takes: { one: { blob: new Blob(["voice"]), startMs: 0 } }, selectedCueId: "one", playVideoAudio: true, autoAdvance: false,
+  } as unknown as DubbingProject;
+  await saveDubbingProject(builtIn, { current: undefined });
+  const restored = await loadDubbingProject();
+  expect(restored).toMatchObject({ version: 2, source: { kind: "built-in", materialId: "bus", partId: "part-1" } });
+  expect("video" in (restored ?? {})).toBe(false);
+  expect(await restored?.takes.one.blob.text()).toBe("voice");
+});
+
 it("keeps unfinished text edits recoverable", async () => {
   const draft = project(); draft.cues[0].text = "";
   await saveDubbingProject(draft, { current: undefined });
